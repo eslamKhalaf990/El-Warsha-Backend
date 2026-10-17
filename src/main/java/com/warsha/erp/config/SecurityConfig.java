@@ -2,6 +2,7 @@ package com.warsha.erp.config;
 
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.AuthenticationProvider;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
@@ -87,8 +88,13 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(org.springframework.security.config.Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/**", "/api/files/**", "/invoice/pdf/**", "/status", "/products", "/category", "/customers/**").permitAll()
-                        .requestMatchers(org.springframework.http.HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/auth/**", "/api/files/**", "/invoice/pdf/**", "/status", "/products/**", "/category/**", "/customers/**", "/governorates/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/shipping/**").permitAll()
+                        .requestMatchers("/feedbacks/customer").authenticated()
+                        .requestMatchers("/feedbacks/public/**", "/feedbacks/product/**").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/feedbacks", "/feedbacks/*/comments").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/feedbacks/*").permitAll()
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                         .anyRequest().authenticated()
                 )
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))

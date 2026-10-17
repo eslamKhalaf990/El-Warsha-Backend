@@ -123,8 +123,8 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true);
 
             helper.setFrom("elwarsha77a@gmail.com");
-//            helper.setTo("ekhalaf990@gmail.com");
-            helper.setTo("ahmednaser77a@gmail.com");
+            helper.setTo("ekhalaf990@gmail.com");
+//            helper.setTo("ahmednaser77a@gmail.com");
             helper.setSubject("New Order Received! (ID: " + orderId + ")");
 
             String emailBody = String.format("""

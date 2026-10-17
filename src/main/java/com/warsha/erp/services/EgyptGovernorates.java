@@ -1,10 +1,13 @@
 package com.warsha.erp.services;
 
+import com.warsha.erp.dtos.GovernoratePriceDto;
+
 import java.util.*;
+import java.util.stream.Collectors;
 
 public class EgyptGovernorates {
 
-    private static final Map<String, Double> SHIPPING_RATES = new HashMap<>();
+    private static final Map<String, Double> SHIPPING_RATES = new LinkedHashMap<>();
 
     static {
         // --- Zone 1: Metro & Delta (Lower Cost - 55 EGP) ---
@@ -61,8 +64,26 @@ public class EgyptGovernorates {
         return SHIPPING_RATES.get(normalize(city));
     }
 
+    public static GovernoratePriceDto getGovernoratePrice(String city) {
+        if (!isValid(city)) {
+            throw new IllegalArgumentException("المحافظة غير موجودة في قائمة الأسعار: " + city);
+        }
+        String normalized = normalize(city);
+        return new GovernoratePriceDto(normalized, SHIPPING_RATES.get(normalized));
+    }
+
+    public static List<GovernoratePriceDto> getAllGovernoratePrices() {
+        return SHIPPING_RATES.entrySet().stream()
+                .map(entry -> new GovernoratePriceDto(entry.getKey(), entry.getValue()))
+                .collect(Collectors.toList());
+    }
+
+    public static Map<String, Double> getAllRatesMap() {
+        return Collections.unmodifiableMap(SHIPPING_RATES);
+    }
+
     // Normalization handles spelling variations (important for Arabic)
-    private static String normalize(String input) {
+    public static String normalize(String input) {
         if (input == null) return "";
         String trimmed = input.trim();
 
