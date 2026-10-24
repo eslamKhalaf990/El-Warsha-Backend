@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-SERVER_IP="67.211.210.15"
+SERVER_IP="68.168.222.245"
 USER="root"
 JAR_NAME="erp-0.0.1-SNAPSHOT.jar"
 LOCAL_PATH="target/$JAR_NAME"
@@ -36,6 +36,6 @@ ssh $USER@$SERVER_IP "pkill -f $JAR_NAME || true"
 # 3. Start new app
 echo "3. Starting new application..."
 # Added a small sleep to ensure the port clears, just in case
-ssh $USER@$SERVER_IP "nohup java -jar $REMOTE_PATH$JAR_NAME > app.log 2>&1 &"
+ssh $USER@$SERVER_IP "nohup java -Xms256m -Xmx512m -jar $REMOTE_PATH$JAR_NAME > app.log 2>&1 &"
 
 echo "--- ✅ Deployment Complete! ---"

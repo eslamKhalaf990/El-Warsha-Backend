@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.warsha.erp.dtos.ProductDTO;
 import com.warsha.erp.entities.Product;
 import com.warsha.erp.services.ProductService;
+import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.http.*;
@@ -15,6 +16,7 @@ import java.net.MalformedURLException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/products")
@@ -56,6 +58,33 @@ public class ProductController {
 
         } catch (MalformedURLException e) {
             return ResponseEntity.badRequest().build();
+        }
+    }
+
+    // All images in the image library, for the "choose an image" picker
+    @GetMapping("/images")
+    public List<Map<String, String>> getLibraryImages() throws IOException {
+        return productService.listLibraryImages();
+    }
+
+    // Add a new image to the library without touching any product
+    @PostMapping(value = "/images", consumes = { MediaType.MULTIPART_FORM_DATA_VALUE })
+    public ResponseEntity<Map<String, String>> uploadLibraryImage(@RequestPart("image") MultipartFile image) throws IOException {
+        if (image == null || image.isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        return new ResponseEntity<>(productService.uploadLibraryImage(image), HttpStatus.CREATED);
+    }
+
+    // Assign an existing library image to a product. Body: { "filename": "abc.jpg" }
+    @PutMapping("/{id}/image")
+    public ResponseEntity<?> assignImage(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        try {
+            return ResponseEntity.ok(productService.assignImage(id, body.get("filename")));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        } catch (EntityNotFoundException e) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
         }
     }
 

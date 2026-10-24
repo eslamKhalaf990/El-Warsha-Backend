@@ -19,8 +19,10 @@ import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class ProductService {
@@ -29,7 +31,7 @@ public class ProductService {
 
     // This pulls the path from your application.properties,
     // defaulting to your Ubuntu path if not specified
-    @Value("${image.upload.dir:/var/www/el-warsha/images/}")
+    @Value("${image.upload.dir:/root/warsha_images/}")
     private String uploadDir;
 
     @Autowired
@@ -148,9 +150,7 @@ public class ProductService {
 
         if (image != null && !image.isEmpty()) {
             try {
-                // Optionally delete the old image from disk to save space
-                deleteImageFromDisk(existing.getImageUrl());
-
+                // Old image stays in the library: other products may still use it
                 // Save the new image
                 String imageUrl = saveImageToDisk(image);
                 existing.setImageUrl(imageUrl);
@@ -166,9 +166,7 @@ public class ProductService {
         Product product = productRepository.findById(id)
                 .orElseThrow(() -> new EntityNotFoundException("Product not found with id " + id));
 
-        // Delete the physical file from the hard drive
-        deleteImageFromDisk(product.getImageUrl());
-
+        // Image file is kept: it belongs to the shared image library
         // Soft delete: mark as deleted
         product.setDeleted("true");
         product.setUpdatedAt(LocalDateTime.now());
@@ -178,6 +176,52 @@ public class ProductService {
 
     public void deleteAll() {
         productRepository.deleteAll();
+    }
+
+    // --- Image Library (all images in uploadDir) ---
+
+    public List<Map<String, String>> listLibraryImages() throws IOException {
+        Path uploadPath = Paths.get(uploadDir);
+        if (!Files.exists(uploadPath)) {
+            return List.of();
+        }
+
+        try (Stream<Path> files = Files.list(uploadPath)) {
+            return files
+                    .filter(Files::isRegularFile)
+                    .map(p -> p.getFileName().toString())
+                    .filter(name -> !name.startsWith("."))
+                    .sorted()
+                    .map(name -> Map.of("filename", name, "url", "/images/" + name))
+                    .collect(Collectors.toList());
+        }
+    }
+
+    public Map<String, String> uploadLibraryImage(MultipartFile image) throws IOException {
+        String url = saveImageToDisk(image);
+        return Map.of("filename", url.replace("/images/", ""), "url", url);
+    }
+
+    public Product assignImage(Long productId, String filename) {
+        if (filename == null || filename.isBlank()) {
+            throw new IllegalArgumentException("filename is required");
+        }
+
+        // Only plain file names inside the image folder are allowed
+        Path uploadPath = Paths.get(uploadDir).toAbsolutePath().normalize();
+        Path filePath = uploadPath.resolve(filename).normalize();
+        if (!filePath.getParent().equals(uploadPath)) {
+            throw new IllegalArgumentException("Invalid filename");
+        }
+        if (!Files.isRegularFile(filePath)) {
+            throw new EntityNotFoundException("Image not found: " + filename);
+        }
+
+        Product product = productRepository.findById(productId)
+                .orElseThrow(() -> new EntityNotFoundException("Product not found with id " + productId));
+        product.setImageUrl("/images/" + filePath.getFileName());
+        product.setUpdatedAt(LocalDateTime.now());
+        return productRepository.save(product);
     }
 
     // --- Private Helper Methods ---
@@ -205,21 +249,5 @@ public class ProductService {
 
         // Return the exact string that needs to be saved in the database
         return "/images/" + uniqueFileName;
-    }
-
-    private void deleteImageFromDisk(String imageUrl) {
-        if (imageUrl == null || imageUrl.isEmpty()) {
-            return;
-        }
-
-        try {
-            // Strip the "/images/" part to get just the filename
-            String filename = imageUrl.replace("/images/", "");
-            Path filePath = Paths.get(uploadDir).resolve(filename).normalize();
-
-            Files.deleteIfExists(filePath);
-        } catch (IOException e) {
-            System.err.println("Failed to delete image file: " + e.getMessage());
-        }
     }
 }

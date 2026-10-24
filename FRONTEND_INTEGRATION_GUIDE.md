@@ -332,11 +332,43 @@ Returns the product entity.
 ### 3.5 Product Images
 
 Images are stored and referenced via relative paths returned in `imageUrl` (e.g. `/images/filename.jpg`).
-- In production, static images are served directly by the web server under `https://yourdomain.com/images/<filename>`.
+- The backend serves them directly: `GET /images/<filename>` (prefix `imageUrl` with the API base URL).
 - Alternatively, via backend endpoint:
   ```http
   GET /products/getImage?filename=<unique_filename>
   ```
+
+#### Image library (choose an existing image for a product)
+
+All images live in one shared folder on the server (`warsha_images`). Replacing or deleting a product never deletes the image file.
+
+**List all images**
+```http
+GET /products/images
+```
+```json
+[
+  { "filename": "031a44dc-d0a9-4caf-8e74-0be162b081c8.jpg", "url": "/images/031a44dc-d0a9-4caf-8e74-0be162b081c8.jpg" }
+]
+```
+
+**Assign an image to a product**
+```http
+PUT /products/{id}/image
+Content-Type: application/json
+
+{ "filename": "031a44dc-d0a9-4caf-8e74-0be162b081c8.jpg" }
+```
+Returns the updated product (`200`). Errors: `400` missing/invalid filename, `404` image or product not found.
+
+**Upload a new image to the library** (without assigning it)
+```http
+POST /products/images
+Content-Type: multipart/form-data
+
+image: <file>
+```
+Returns `201` with `{ "filename": "...", "url": "/images/..." }`. Then assign it with `PUT /products/{id}/image`.
 
 ---
 
