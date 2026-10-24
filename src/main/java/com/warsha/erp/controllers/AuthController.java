@@ -3,22 +3,27 @@ package com.warsha.erp.controllers;
 import com.warsha.erp.config.JwtUtil;
 import com.warsha.erp.entities.Customer;
 import com.warsha.erp.entities.User;
+import com.warsha.erp.exceptions.AppException;
+import com.warsha.erp.exceptions.ErrorCode;
+import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.services.CustomerService;
 import com.warsha.erp.services.EmailService;
 import com.warsha.erp.services.UserService;
 import com.warsha.erp.services.UserActivityLogService;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.Getter;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.security.authentication.*;
-import org.springframework.security.core.Authentication;
+import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
+@Slf4j
 @RestController
 @RequestMapping("/auth")
 public class AuthController {
@@ -39,23 +44,22 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
-        System.out.println("[" + getTimestamp() + "] INFO: ERP Login attempt for: " + request.getUsername());
+    public ResponseEntity<ERPLogin> login(@RequestBody LoginRequest request) {
+        if (request.getUsername() == null || request.getUsername().isBlank()
+                || request.getPassword() == null || request.getPassword().isBlank()) {
+            throw new ValidationException("Username and password are required.");
+        }
         try {
-            Authentication authentication = authManager.authenticate(
+            authManager.authenticate(
                     new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword())
             );
-
-            String token = jwtUtil.generateToken(request.getUsername(), "ADMIN");
-            System.out.println("[" + getTimestamp() + "] SUCCESS: ERP Admin authenticated: " + request.getUsername());
-            return ResponseEntity.ok(new ERPLogin(token));
-        } catch (BadCredentialsException e) {
-            System.out.println("[" + getTimestamp() + "] WARN: ERP Login failed - Invalid credentials for: " + request.getUsername());
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Invalid credentials");
-        } catch (Exception e) {
-            System.out.println("[" + getTimestamp() + "] ERROR: ERP Login unexpected error: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body("Authentication error");
+        } catch (BadCredentialsException | UsernameNotFoundException e) {
+            log.info("ERP login failed for {}", request.getUsername());
+            throw new AppException(ErrorCode.INVALID_CREDENTIALS);
         }
+
+        log.info("ERP login succeeded for {}", request.getUsername());
+        return ResponseEntity.ok(new ERPLogin(jwtUtil.generateToken(request.getUsername(), JwtUtil.ROLE_ADMIN)));
     }
 
     @PostMapping("/customerLogin")
@@ -68,7 +72,7 @@ public class AuthController {
             if (customer != null && passwordEncoder.matches(loginRequest.getPassword(), customer.getPassword())) {
                 
                 if ("Active".equals(customer.getStatus())) {
-                    String token = jwtUtil.generateToken(customer.getEmail(), "CUSTOMER");
+                    String token = jwtUtil.generateToken(customer.getEmail(), JwtUtil.ROLE_CUSTOMER);
                     System.out.println("[" + getTimestamp() + "] SUCCESS: Customer authenticated: " + customer.getEmail());
 
                     userActivityLogService.logCustomerLogin(customer.getId(), request);

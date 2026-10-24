@@ -4,9 +4,9 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
-import org.springframework.security.authentication.AuthenticationProvider;
+import org.springframework.security.authentication.ProviderManager;
 import org.springframework.security.authentication.dao.DaoAuthenticationProvider;
-import org.springframework.security.config.annotation.authentication.builders.AuthenticationManagerBuilder;
+import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configuration.EnableWebSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
@@ -16,30 +16,33 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.security.web.authentication.UsernamePasswordAuthenticationFilter;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
-
+/**
+ * Access rules, in three tiers:
+ * <ul>
+ *   <li><b>Public</b>: login/sign-up flows, the read-only storefront catalog, and reviews
+ *       (guests may leave feedback).</li>
+ *   <li><b>CUSTOMER</b>: the e-commerce customer's own orders and reviews.</li>
+ *   <li><b>ADMIN</b>: everything else, i.e. the whole ERP.</li>
+ * </ul>
+ * Anything not listed explicitly falls through to ADMIN, so new endpoints are private by default.
+ */
 @Configuration
 @EnableWebSecurity
 public class SecurityConfig {
 
-    private final CustomUserDetailsService adminService;
-    private final CustomerDetailsService customerService;
-    private final JwtAuthenticationFilter jwtFilter;
+    private static final String ADMIN = "ADMIN";
+    private static final String CUSTOMER = "CUSTOMER";
 
-    // Formatter for consistent log timestamps
-    private final DateTimeFormatter logFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
+    private final CustomUserDetailsService adminService;
+    private final JwtAuthenticationFilter jwtFilter;
+    private final RestAuthErrorHandlers authErrorHandlers;
 
     public SecurityConfig(CustomUserDetailsService adminService,
-                          CustomerDetailsService customerService,
-                          JwtAuthenticationFilter jwtFilter) {
+                          JwtAuthenticationFilter jwtFilter,
+                          RestAuthErrorHandlers authErrorHandlers) {
         this.adminService = adminService;
-        this.customerService = customerService;
         this.jwtFilter = jwtFilter;
-    }
-
-    private String getTimestamp() {
-        return LocalDateTime.now().format(logFormat);
+        this.authErrorHandlers = authErrorHandlers;
     }
 
     @Bean
@@ -47,60 +50,59 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
+    /**
+     * Used only by the ERP login. Customers log in through /auth/customerLogin, which checks
+     * their password directly, so a customer account can never obtain an ADMIN token here.
+     */
     @Bean
-    public AuthenticationProvider adminAuthenticationProvider() {
-        System.out.println("[" + getTimestamp() + "] CONFIG: Initializing Admin Authentication Provider");
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
-        authProvider.setUserDetailsService(adminService);
-        authProvider.setPasswordEncoder(passwordEncoder());
-        return authProvider;
-    }
-
-    @Bean
-    public AuthenticationProvider customerAuthenticationProvider() {
-        System.out.println("[" + getTimestamp() + "] CONFIG: Initializing Customer Authentication Provider");
-        DaoAuthenticationProvider authProvider = new DaoAuthenticationProvider();
-        authProvider.setUserDetailsService(customerService);
-        authProvider.setPasswordEncoder(passwordEncoder());
-        return authProvider;
-    }
-
-    @Bean
-    public AuthenticationManager authManager(HttpSecurity http) throws Exception {
-        System.out.println("[" + getTimestamp() + "] CONFIG: Building Authentication Manager with dual providers");
-        AuthenticationManagerBuilder authenticationManagerBuilder =
-                http.getSharedObject(AuthenticationManagerBuilder.class);
-
-        // Register both providers
-        authenticationManagerBuilder.authenticationProvider(adminAuthenticationProvider());
-        authenticationManagerBuilder.authenticationProvider(customerAuthenticationProvider());
-
-        AuthenticationManager manager = authenticationManagerBuilder.build();
-        System.out.println("[" + getTimestamp() + "] SUCCESS: Authentication Manager ready");
-        return manager;
+    public AuthenticationManager authManager() {
+        DaoAuthenticationProvider provider = new DaoAuthenticationProvider();
+        provider.setUserDetailsService(adminService);
+        provider.setPasswordEncoder(passwordEncoder());
+        return new ProviderManager(provider);
     }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
-        System.out.println("[" + getTimestamp() + "] CONFIG: Configuring Security Filter Chain...");
-
         http
                 .csrf(AbstractHttpConfigurer::disable)
-                .cors(org.springframework.security.config.Customizer.withDefaults())
-                .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/**", "/api/files/**", "/invoice/pdf/**", "/status", "/products/**", "/category/**", "/customers/**", "/governorates/**", "/images/**", "/error").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/shipping/**").permitAll()
-                        .requestMatchers("/feedbacks/customer").authenticated()
-                        .requestMatchers("/feedbacks/public/**", "/feedbacks/product/**").permitAll()
-                        .requestMatchers(HttpMethod.POST, "/feedbacks", "/feedbacks/*/comments").permitAll()
-                        .requestMatchers(HttpMethod.GET, "/feedbacks/*").permitAll()
-                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                        .anyRequest().authenticated()
-                )
+                .cors(Customizer.withDefaults())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
+                .exceptionHandling(e -> e
+                        .authenticationEntryPoint(authErrorHandlers.entryPoint())
+                        .accessDeniedHandler(authErrorHandlers.accessDeniedHandler()))
+                .authorizeHttpRequests(auth -> auth
+                        // --- Infrastructure ---
+                        .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                        .requestMatchers("/error", "/status").permitAll()
+
+                        // --- Public: authentication flows ---
+                        .requestMatchers(HttpMethod.POST,
+                                "/auth/login", "/auth/customerLogin", "/auth/verifyCode",
+                                "/auth/forgotPassword", "/auth/resetPassword", "/auth/changePassword",
+                                "/customers/customerSignUp", "/customers/resend-otp").permitAll()
+
+                        // --- Public: storefront catalog (read-only) ---
+                        .requestMatchers(HttpMethod.GET,
+                                "/products/**", "/category/**", "/governorates/**", "/shipping/**",
+                                "/images/**", "/api/files/**").permitAll()
+
+                        // --- Public: reviews (guests may submit feedback and comments) ---
+                        .requestMatchers(HttpMethod.GET, "/feedbacks/public/**", "/feedbacks/product/**").permitAll()
+                        .requestMatchers(HttpMethod.GET, "/feedbacks/customer").hasRole(CUSTOMER)
+                        .requestMatchers(HttpMethod.GET, "/feedbacks/*").permitAll()
+                        .requestMatchers(HttpMethod.POST, "/feedbacks", "/feedbacks/*/comments").permitAll()
+
+                        // --- CUSTOMER: own orders ---
+                        .requestMatchers(HttpMethod.POST, "/orders/placeOrder").hasRole(CUSTOMER)
+                        .requestMatchers(HttpMethod.GET, "/orders/customer").hasRole(CUSTOMER)
+                        .requestMatchers(HttpMethod.POST, "/vouchers/validate").hasAnyRole(CUSTOMER, ADMIN)
+
+                        // --- ADMIN: the whole ERP, including /auth/register and invoice PDFs ---
+                        .anyRequest().hasRole(ADMIN)
+                )
                 .addFilterBefore(jwtFilter, UsernamePasswordAuthenticationFilter.class);
 
-        System.out.println("[" + getTimestamp() + "] SUCCESS: Security Filter Chain applied.");
         return http.build();
     }
 }
