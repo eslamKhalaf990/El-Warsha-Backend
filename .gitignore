@@ -35,3 +35,7 @@ build/
 
 ### macOS ###
 .DS_Store
+
+### Secrets ###
+secrets.properties
+tokens/
