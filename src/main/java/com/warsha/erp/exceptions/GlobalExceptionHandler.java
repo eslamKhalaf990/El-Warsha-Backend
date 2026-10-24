@@ -58,6 +58,12 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(HttpMessageNotReadableException.class)
     public ResponseEntity<ApiError> handleUnreadable(HttpMessageNotReadableException ex, HttpServletRequest request) {
+        // A @JsonCreator (e.g. OrderStatus.from) may reject a value with a friendly AppException.
+        for (Throwable cause = ex.getCause(); cause != null; cause = cause.getCause()) {
+            if (cause instanceof AppException app) {
+                return handleApp(app, request);
+            }
+        }
         log.info("{} {} -> unreadable body: {}", request.getMethod(), request.getRequestURI(), ex.getMostSpecificCause().getMessage());
         return build(ErrorCode.MALFORMED_REQUEST, null, List.of(), request);
     }

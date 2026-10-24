@@ -4,7 +4,10 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.warsha.erp.dtos.*;
 import com.warsha.erp.entities.*;
+import com.warsha.erp.exceptions.BusinessRuleException;
 import com.warsha.erp.exceptions.InsufficientStockException;
+import com.warsha.erp.exceptions.NotFoundException;
+import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.OrderRepository;
 import com.warsha.erp.repository.ProductRepository;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -73,7 +76,7 @@ public class OrderService {
         Order order = new Order();
         order.setCustomer(customer);
         order.setOrderDate(LocalDate.now());
-        order.setStatus("Pending");
+        order.setStatus(OrderStatus.PENDING);
         order.setOrderSource(request.getOrderSource());
         order.setDeliveryCharge(request.getDelivery());
         order.setNotes(request.getNotes());
@@ -132,7 +135,7 @@ public class OrderService {
         Order order = new Order();
         order.setCustomer(customer);
         order.setOrderDate(LocalDate.now());
-        order.setStatus("Pending");
+        order.setStatus(OrderStatus.PENDING);
         order.setOrderSource(request.getOrderSource());
         order.setDeliveryCharge(EgyptGovernorates.getDeliveryPrice(customer.getGovernorate()));
         order.setNotes(request.getNotes());
@@ -251,7 +254,11 @@ public class OrderService {
     @Transactional
     public Order updateOrder(Long orderId, CreateOrderRequest request) {
         System.out.println("[" + getTimestamp() + "] WARN: Processing update for Order #" + orderId);
-        Order existingOrder = orderRepository.findById(orderId).orElseThrow(() -> new RuntimeException("Order not found"));
+        Order existingOrder = findOrder(orderId);
+        if (!existingOrder.getStatus().isEditable()) {
+            throw new BusinessRuleException("Order #" + orderId + " is " + existingOrder.getStatus().lower()
+                    + " and can no longer be edited.");
+        }
 
         // Update fields
         existingOrder.setOrderSource(request.getOrderSource());
@@ -297,13 +304,24 @@ public class OrderService {
     }
 
     @Transactional
-    public Order updateOrderStatus(Long orderId, String status, Long bankAccountId) {
-        System.out.println("[" + getTimestamp() + "] INFO: Updating status for Order #" + orderId + " to: " + status);
-        Order existingOrder = orderRepository.findById(orderId).orElseThrow(() -> new RuntimeException("Order not found"));
-        existingOrder.setStatus(status);
+    public Order updateOrderStatus(Long orderId, OrderStatus target, Long bankAccountId) {
+        if (target == null) {
+            throw new ValidationException("status", "Choose the new status for the order.");
+        }
+        if (target == OrderStatus.CANCELLED) {
+            return cancelOrder(orderId);
+        }
 
-        if ("Completed".equals(status)) {
-            System.out.println("[" + getTimestamp() + "] INFO: Order Completed. Recording final bank transaction.");
+        Order existingOrder = findOrder(orderId);
+        ensureTransition(existingOrder, target);
+        if (target == OrderStatus.COMPLETED && bankAccountId == null) {
+            throw new ValidationException("bankAccountId", "Choose the bank account that received the final payment.");
+        }
+
+        System.out.println("[" + getTimestamp() + "] INFO: Order #" + orderId + ": " + existingOrder.getStatus() + " -> " + target);
+        existingOrder.setStatus(target);
+
+        if (target == OrderStatus.COMPLETED) {
             BankTransactionDTO bankTx = new BankTransactionDTO();
             bankTx.setBankAccountId(bankAccountId);
             bankTx.setTransactionType("Deposit");
@@ -313,10 +331,9 @@ public class OrderService {
             bankTx.setDescription("Order #" + orderId + " Final Payment");
             bankTx.setAmount(BigDecimal.valueOf(existingOrder.getTotalPrice()));
             bankTransactionService.createTransaction(bankTx);
-        } else if ("Processing".equals(status)){
-            System.out.println("[" + getTimestamp() + "] INFO: Order Processing. No financial action required at this stage.");
+        } else if (target == OrderStatus.PROCESSING) {
             emailService.sendOrderProcessingEmail(
-                    existingOrder.getCustomer().getEmail(), // Assuming phone is used as email for demo
+                    existingOrder.getCustomer().getEmail(),
                     existingOrder.getCustomer().getFullName(),
                     existingOrder.getId().toString(),
                     existingOrder.getTotalPrice()
@@ -324,6 +341,25 @@ public class OrderService {
         }
 
         return orderRepository.save(existingOrder);
+    }
+
+    /** Throws a user-facing 422 explaining why the order can't move to {@code target}. */
+    private void ensureTransition(Order order, OrderStatus target) {
+        OrderStatus current = order.getStatus();
+        if (current.canMoveTo(target)) return;
+
+        String id = "Order #" + order.getId();
+        if (current == target) {
+            throw new BusinessRuleException(id + " is already " + current.lower() + ".");
+        }
+        if (current.isFinal()) {
+            throw new BusinessRuleException(id + " is " + current.lower() + " and its status can no longer be changed.");
+        }
+        throw new BusinessRuleException(id + " can't go back from " + current + " to " + target + ".");
+    }
+
+    private Order findOrder(Long orderId) {
+        return orderRepository.findById(orderId).orElseThrow(() -> new NotFoundException("Order", orderId));
     }
 
     public List<OrderResponse> getAllOrders(LocalDate userStart, LocalDate userEnd) {
@@ -352,6 +388,7 @@ public class OrderService {
         }
         dto.setOrderDate(order.getOrderDate());
         dto.setStatus(order.getStatus());
+        dto.setAllowedNextStatuses(order.getStatus().allowedNext());
         dto.setOrderSource(order.getOrderSource());
         dto.setDiscount(order.getDiscount());
         dto.setDelivery(order.getDeliveryCharge());
@@ -380,7 +417,7 @@ public class OrderService {
     @Transactional
     public void deleteOrder(Long orderId) {
         System.out.println("[" + getTimestamp() + "] ALERT: Deleting Order #" + orderId);
-        Order order = orderRepository.findById(orderId).orElseThrow(() -> new RuntimeException("Order not found"));
+        Order order = findOrder(orderId);
 
         for (OrderItems item : order.getItems()) {
             Product p = item.getProduct();
@@ -395,11 +432,10 @@ public class OrderService {
     }
 
     @Transactional
-    public void cancelOrder(Long orderId) {
+    public Order cancelOrder(Long orderId) {
         System.out.println("[" + getTimestamp() + "] WARN: Cancelling Order #" + orderId);
-        Order order = orderRepository.findById(orderId).orElseThrow(() -> new RuntimeException("Order not found"));
-
-        if ("Cancelled".equals(order.getStatus())) return;
+        Order order = findOrder(orderId);
+        ensureTransition(order, OrderStatus.CANCELLED);
 
         for (OrderItems item : order.getItems()) {
             Product p = item.getProduct();
@@ -408,14 +444,15 @@ public class OrderService {
         }
 
         paymentService.cancelPaymentsByOrderId(orderId);
-        order.setStatus("Cancelled");
+        order.setStatus(OrderStatus.CANCELLED);
             emailService.sendOrderCancellationEmail(
                     order.getCustomer().getEmail(),
                     order.getCustomer().getFullName(),
                     order.getId().toString()
             );
-        orderRepository.save(order);
+        Order saved = orderRepository.save(order);
         System.out.println("[" + getTimestamp() + "] SUCCESS: Order #" + orderId + " cancelled.");
+        return saved;
     }
 
     public List<OrderCountByGovernorateDto> getOrderCountsByGovernorate() {

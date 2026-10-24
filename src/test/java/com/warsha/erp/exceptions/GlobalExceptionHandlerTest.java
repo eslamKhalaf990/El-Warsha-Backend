@@ -49,6 +49,10 @@ class GlobalExceptionHandlerTest {
         @PostMapping("/body")
         void body(@Valid @RequestBody Item item) {
         }
+
+        @PostMapping("/status")
+        void status(@RequestBody com.warsha.erp.dtos.UpdateOrderStatus body) {
+        }
     }
 
     record Item(@NotBlank(message = "name is required") String name,
@@ -110,6 +114,15 @@ class GlobalExceptionHandlerTest {
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
                 .andExpect(jsonPath("$.details.length()").value(2));
+    }
+
+    @Test
+    void invalidEnumValueKeepsFriendlyMessage() throws Exception {
+        mvc.perform(post("/test/status").contentType(MediaType.APPLICATION_JSON).content("{\"status\":\"Delivered\"}"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"))
+                .andExpect(jsonPath("$.details[0].field").value("status"))
+                .andExpect(jsonPath("$.message").value(org.hamcrest.Matchers.startsWith("'Delivered' is not a valid order status")));
     }
 
     @Test

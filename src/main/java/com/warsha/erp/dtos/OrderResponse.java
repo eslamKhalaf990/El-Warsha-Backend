@@ -2,6 +2,7 @@ package com.warsha.erp.dtos;
 
 import com.warsha.erp.entities.Customer;
 import com.warsha.erp.entities.Order;
+import com.warsha.erp.entities.OrderStatus;
 import lombok.Getter;
 import lombok.Setter;
 
@@ -14,7 +15,9 @@ import java.util.stream.Collectors;
 @Setter
 public class OrderResponse {
     private Long orderId;
-    private String status;
+    private OrderStatus status;
+    /** Statuses this order may move to next; empty once Completed or Cancelled. */
+    private List<OrderStatus> allowedNextStatuses = List.of();
 
     private double discount;
     private double delivery;
@@ -32,6 +35,7 @@ public class OrderResponse {
         dto.setOrderId(order.getId());
         dto.setOrderDate(order.getOrderDate());
         dto.setStatus(order.getStatus());
+        dto.setAllowedNextStatuses(order.getStatus() != null ? order.getStatus().allowedNext() : List.of());
         dto.setOrderSource(order.getOrderSource());
         dto.setDelivery(order.getDeliveryCharge());
         dto.setDiscount(order.getDiscount());
