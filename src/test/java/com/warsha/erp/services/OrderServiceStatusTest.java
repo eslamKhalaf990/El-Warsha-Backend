@@ -8,7 +8,6 @@ import com.warsha.erp.exceptions.BusinessRuleException;
 import com.warsha.erp.exceptions.NotFoundException;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.OrderRepository;
-import com.warsha.erp.repository.ProductRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -29,20 +28,19 @@ import static org.mockito.Mockito.*;
 class OrderServiceStatusTest {
 
     @Mock OrderRepository orderRepository;
-    @Mock ProductRepository productRepository;
     @Mock CustomerService customerService;
-    @Mock ProductService productService;
     @Mock InvoiceService invoiceService;
     @Mock EmailService emailService;
     @Mock PaymentService paymentService;
     @Mock BankTransactionService bankTransactionService;
+    @Mock StockService stockService;
 
     OrderService service;
 
     @BeforeEach
     void setUp() {
-        service = new OrderService(orderRepository, productRepository, customerService, productService,
-                invoiceService, emailService, paymentService, bankTransactionService);
+        service = new OrderService(orderRepository, customerService,
+                invoiceService, emailService, paymentService, bankTransactionService, stockService);
     }
 
     private Order order(OrderStatus status) {
@@ -132,7 +130,7 @@ class OrderServiceStatusTest {
         assertThatThrownBy(() -> service.cancelOrder(12L))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessage("Order #12 is already cancelled.");
-        verifyNoInteractions(productService);
+        verifyNoInteractions(stockService);
     }
 
     @Test

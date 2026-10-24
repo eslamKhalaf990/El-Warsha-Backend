@@ -19,7 +19,7 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     List<Product> findByCategoryId(@Param("categoryId") Long categoryId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("SELECT p FROM Product p WHERE p.ProductID IN :ids")
+    @Query("SELECT p FROM Product p WHERE p.ProductID IN :ids ORDER BY p.ProductID")
     List<Product> findAllByIdWithLock(@Param("ids") List<Long> ids);
 
 }

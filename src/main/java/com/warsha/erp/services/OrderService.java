@@ -5,11 +5,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.warsha.erp.dtos.*;
 import com.warsha.erp.entities.*;
 import com.warsha.erp.exceptions.BusinessRuleException;
-import com.warsha.erp.exceptions.InsufficientStockException;
 import com.warsha.erp.exceptions.NotFoundException;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.OrderRepository;
-import com.warsha.erp.repository.ProductRepository;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -29,7 +27,9 @@ import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -37,31 +37,29 @@ import java.util.stream.Collectors;
 public class OrderService {
 
     private final OrderRepository orderRepository;
-    private final ProductRepository productRepository;
     private final CustomerService customerService;
-    private final ProductService productService;
     private final InvoiceService invoiceService;
     private final EmailService emailService;
     private final PaymentService paymentService;
     private final BankTransactionService bankTransactionService;
+    private final StockService stockService;
 
     // Formatter for consistent log timestamps
     private final DateTimeFormatter logFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
 
     @Autowired
-    public OrderService(OrderRepository orderRepo, ProductRepository productRepository,
+    public OrderService(OrderRepository orderRepo,
                         CustomerService customerService,
-                        ProductService productService,
                         InvoiceService invoiceService, EmailService emailService,
-                        PaymentService paymentService, BankTransactionService bankTransactionService) {
+                        PaymentService paymentService, BankTransactionService bankTransactionService,
+                        StockService stockService) {
         this.orderRepository = orderRepo;
-        this.productRepository = productRepository;
         this.customerService = customerService;
-        this.productService = productService;
         this.invoiceService = invoiceService;
         this.emailService = emailService;
         this.paymentService = paymentService;
         this.bankTransactionService = bankTransactionService;
+        this.stockService = stockService;
     }
 
     private String getTimestamp() {
@@ -83,10 +81,11 @@ public class OrderService {
 
         List<OrderItems> itemList = new ArrayList<>();
         BigDecimal calculatedDiscount = BigDecimal.ZERO;
+        Map<Long, Product> products = stockService.lock(productIds(request));
 
         for (OrderItemRequest itemReq : request.getItems()) {
-            Product product = productService.getProductById(itemReq.getProductId());
-            System.out.println("[" + getTimestamp() + "] INFO: Adding Product: " + product.getName() + " (Qty: " + itemReq.getQuantity() + ")");
+            Product product = products.get(itemReq.getProductId());
+            stockService.take(product, itemReq.getQuantity());
 
             OrderItems item = new OrderItems();
             item.setOrder(order);
@@ -94,17 +93,11 @@ public class OrderService {
             item.setUnitPrice(itemReq.getUnitPrice() == null ? product.getSellingPrice() : itemReq.getUnitPrice());
             item.setQuantity(itemReq.getQuantity());
 
-            int oldValue = Integer.parseInt(product.getQuantity());
-            product.setQuantity(String.valueOf(oldValue - itemReq.getQuantity()));
-            int soldBefore = product.getSold() != null ? product.getSold() : 0;
-            product.setSold(soldBefore + itemReq.getQuantity());
-
             calculatedDiscount = calculatedDiscount.add(
                     BigDecimal.valueOf(itemReq.getQuantity())
                             .multiply(BigDecimal.valueOf(product.getDiscount()))
             );
 
-            productService.updateProduct(itemReq.getProductId(), product);
             itemList.add(item);
         }
 
@@ -128,9 +121,7 @@ public class OrderService {
         System.out.println("[" + getTimestamp() + "] INFO: Starting E-Commerce Order for Customer ID: " + customerId);
         Customer customer = customerService.getCustomerByID(customerId);
 
-        List<Long> productIds = request.getItems().stream().map(OrderItemRequest::getProductId).collect(Collectors.toList());
-        List<Product> products = productRepository.findAllByIdWithLock(productIds);
-        Map<Long, Product> productMap = products.stream().collect(Collectors.toMap(Product::getProductID, Function.identity()));
+        Map<Long, Product> productMap = stockService.lock(productIds(request));
 
         Order order = new Order();
         order.setCustomer(customer);
@@ -146,13 +137,7 @@ public class OrderService {
 
         for (OrderItemRequest itemReq : request.getItems()) {
             Product product = productMap.get(itemReq.getProductId());
-            if (product == null) throw new IllegalArgumentException("Product ID " + itemReq.getProductId() + " not found.");
-
-            int currentStock = Integer.parseInt(product.getQuantity());
-            if (currentStock < itemReq.getQuantity()) {
-                System.out.println("[" + getTimestamp() + "] ERROR: Out of stock for " + product.getName());
-                throw new InsufficientStockException("Insufficient stock for: " + product.getName());
-            }
+            stockService.take(product, itemReq.getQuantity());
 
             // todo:  - product.getDiscount()
             BigDecimal unitPrice = BigDecimal.valueOf(product.getSellingPrice());
@@ -163,10 +148,6 @@ public class OrderService {
                             .multiply(BigDecimal.valueOf(product.getDiscount()))
             );
 
-            product.setQuantity(String.valueOf(currentStock - itemReq.getQuantity()));
-            product.setSold((product.getSold() == null ? 0 : product.getSold()) + itemReq.getQuantity());
-            product.setUpdatedAt(LocalDateTime.now());
-
             OrderItems item = new OrderItems();
             item.setOrder(order);
             item.setProduct(product);
@@ -174,8 +155,6 @@ public class OrderService {
             item.setQuantity(itemReq.getQuantity());
             orderItemsList.add(item);
         }
-
-        productRepository.saveAll(products);
 
         order.setDiscount(calculatedDiscount.doubleValue());
 
@@ -268,22 +247,17 @@ public class OrderService {
         existingOrder.setNotes(request.getNotes());
         existingOrder.setTotalPrice(request.calculateTotalPriceERP() - request.getDiscount());
 
-        // Revert Stock
-        for (OrderItems item : existingOrder.getItems()) {
-            Product product = item.getProduct();
-            int restoredQty = Integer.parseInt(product.getQuantity()) + item.getQuantity();
-            product.setQuantity(String.valueOf(restoredQty));
-            productService.updateProduct(product.getProductID(), product);
-        }
+        // Lock old and new products together, return the old lines, then take the new ones.
+        // Any failure rolls back the whole edit, so stock is never left half-updated.
+        Set<Long> touched = new HashSet<>(productIds(request));
+        existingOrder.getItems().forEach(i -> touched.add(i.getProduct().getProductID()));
+        Map<Long, Product> products = stockService.lock(touched);
 
+        stockService.putBackAll(existingOrder.getItems());
         existingOrder.getItems().clear();
         for (OrderItemRequest itemReq : request.getItems()) {
-            Product product = productService.getProductById(itemReq.getProductId());
-            int oldValue = Integer.parseInt(product.getQuantity());
-            if (oldValue < itemReq.getQuantity()) throw new RuntimeException("Insufficient stock for: " + product.getName());
-
-            product.setQuantity(String.valueOf(oldValue - itemReq.getQuantity()));
-            productService.updateProduct(product.getProductID(), product);
+            Product product = products.get(itemReq.getProductId());
+            stockService.take(product, itemReq.getQuantity());
 
             OrderItems item = new OrderItems();
             item.setOrder(existingOrder);
@@ -358,6 +332,21 @@ public class OrderService {
         throw new BusinessRuleException(id + " can't go back from " + current + " to " + target + ".");
     }
 
+    private static List<Long> productIds(CreateOrderRequest request) {
+        if (request.getItems() == null || request.getItems().isEmpty()) {
+            throw new ValidationException("items", "Add at least one product to the order.");
+        }
+        for (OrderItemRequest item : request.getItems()) {
+            if (item.getProductId() == null) {
+                throw new ValidationException("items", "Every order line needs a product.");
+            }
+            if (item.getQuantity() == null || item.getQuantity() < 1) {
+                throw new ValidationException("items", "Every order line needs a quantity of at least 1.");
+            }
+        }
+        return request.getItems().stream().map(OrderItemRequest::getProductId).toList();
+    }
+
     private Order findOrder(Long orderId) {
         return orderRepository.findById(orderId).orElseThrow(() -> new NotFoundException("Order", orderId));
     }
@@ -418,17 +407,25 @@ public class OrderService {
     public void deleteOrder(Long orderId) {
         System.out.println("[" + getTimestamp() + "] ALERT: Deleting Order #" + orderId);
         Order order = findOrder(orderId);
+        OrderStatus status = order.getStatus();
+        if (status == OrderStatus.COMPLETED) {
+            throw new BusinessRuleException("Order #" + orderId + " is completed and can't be deleted.");
+        }
+        if (status != OrderStatus.PENDING && status != OrderStatus.CANCELLED) {
+            throw new BusinessRuleException("Order #" + orderId + " is " + status.lower()
+                    + ". Cancel it instead of deleting it.");
+        }
 
-        for (OrderItems item : order.getItems()) {
-            Product p = item.getProduct();
-            p.setQuantity(String.valueOf(Integer.parseInt(p.getQuantity()) + item.getQuantity()));
-            productService.updateProduct(p.getProductID(), p);
+        // A cancelled order already returned its stock; only a pending one still holds it.
+        if (status == OrderStatus.PENDING) {
+            stockService.lock(order.getItems().stream().map(i -> i.getProduct().getProductID()).toList());
+            stockService.putBackAll(order.getItems());
         }
 
         paymentService.deletePaymentsByOrderId(orderId);
         invoiceService.deleteInvoiceByOrderId(orderId);
         orderRepository.delete(order);
-        System.out.println("[" + getTimestamp() + "] SUCCESS: Order #" + orderId + " deleted and stock restored.");
+        System.out.println("[" + getTimestamp() + "] SUCCESS: Order #" + orderId + " deleted.");
     }
 
     @Transactional
@@ -437,11 +434,8 @@ public class OrderService {
         Order order = findOrder(orderId);
         ensureTransition(order, OrderStatus.CANCELLED);
 
-        for (OrderItems item : order.getItems()) {
-            Product p = item.getProduct();
-            p.setQuantity(String.valueOf(Integer.parseInt(p.getQuantity()) + item.getQuantity()));
-            productService.updateProduct(p.getProductID(), p);
-        }
+        stockService.lock(order.getItems().stream().map(i -> i.getProduct().getProductID()).toList());
+        stockService.putBackAll(order.getItems());
 
         paymentService.cancelPaymentsByOrderId(orderId);
         order.setStatus(OrderStatus.CANCELLED);

@@ -2,6 +2,7 @@ package com.warsha.erp.services;
 
 import com.warsha.erp.dtos.ProductDTO;
 import com.warsha.erp.entities.Product;
+import com.warsha.erp.exceptions.NotFoundException;
 import com.warsha.erp.repository.ProductRepository;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -92,7 +93,7 @@ public class ProductService {
 
     public Product getProductById(Long id) {
         return productRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Product not found"));
+                .orElseThrow(() -> new NotFoundException("Product", id));
     }
 
     // You likely won't need this method anymore since Nginx serves the images,
