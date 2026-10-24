@@ -88,7 +88,7 @@ public class SecurityConfig {
                 .csrf(AbstractHttpConfigurer::disable)
                 .cors(org.springframework.security.config.Customizer.withDefaults())
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/auth/**", "/api/files/**", "/invoice/pdf/**", "/status", "/products/**", "/category/**", "/customers/**", "/governorates/**", "/images/**").permitAll()
+                        .requestMatchers("/auth/**", "/api/files/**", "/invoice/pdf/**", "/status", "/products/**", "/category/**", "/customers/**", "/governorates/**", "/images/**", "/error").permitAll()
                         .requestMatchers(HttpMethod.GET, "/shipping/**").permitAll()
                         .requestMatchers("/feedbacks/customer").authenticated()
                         .requestMatchers("/feedbacks/public/**", "/feedbacks/product/**").permitAll()
