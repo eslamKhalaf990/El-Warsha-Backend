@@ -33,7 +33,7 @@ class OrderServiceStockTest {
     @BeforeEach
     void setUp() {
         service = new OrderService(orderRepository, customerService, mock(InvoiceService.class),
-                mock(EmailService.class), paymentService, mock(BankTransactionService.class),
+                mock(EmailService.class), paymentService, mock(OrderLedgerService.class),
                 new StockService(productRepository));
 
         db.put(1L, StockServiceTest.product(1, "5", 0));

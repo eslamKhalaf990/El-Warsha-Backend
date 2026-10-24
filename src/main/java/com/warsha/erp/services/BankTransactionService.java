@@ -7,6 +7,7 @@ import com.warsha.erp.dtos.TransactionCategoryDTO;
 import com.warsha.erp.entities.BankAccount;
 import com.warsha.erp.entities.BankTransaction;
 import com.warsha.erp.entities.TransactionCategory;
+import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.BankAccountRepository;
 import com.warsha.erp.repository.BankTransactionRepository;
 import com.warsha.erp.repository.TransactionCategoryRepository;
@@ -38,12 +39,14 @@ public class BankTransactionService {
     public BankTransaction createTransaction(BankTransactionDTO dto) {
         BankTransaction transaction = new BankTransaction();
         BankAccount account = bankAccountRepository.findById(dto.getBankAccountId())
-                .orElseThrow(() -> new RuntimeException("Bank account not found"));
+                .orElseThrow(() -> new ValidationException("bankAccountId",
+                        "Bank account #" + dto.getBankAccountId() + " doesn't exist."));
         transaction.setBankAccount(account);
 
         if (dto.getCategoryId() != null) {
             TransactionCategory category = categoryRepository.findById(dto.getCategoryId())
-                    .orElseThrow(() -> new RuntimeException("Category not found"));
+                    .orElseThrow(() -> new ValidationException("categoryId",
+                            "Transaction category #" + dto.getCategoryId() + " doesn't exist."));
             transaction.setCategory(category);
         }
 

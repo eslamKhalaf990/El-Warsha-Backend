@@ -41,7 +41,7 @@ public class OrderService {
     private final InvoiceService invoiceService;
     private final EmailService emailService;
     private final PaymentService paymentService;
-    private final BankTransactionService bankTransactionService;
+    private final OrderLedgerService ledger;
     private final StockService stockService;
 
     // Formatter for consistent log timestamps
@@ -51,14 +51,14 @@ public class OrderService {
     public OrderService(OrderRepository orderRepo,
                         CustomerService customerService,
                         InvoiceService invoiceService, EmailService emailService,
-                        PaymentService paymentService, BankTransactionService bankTransactionService,
+                        PaymentService paymentService, OrderLedgerService ledger,
                         StockService stockService) {
         this.orderRepository = orderRepo;
         this.customerService = customerService;
         this.invoiceService = invoiceService;
         this.emailService = emailService;
         this.paymentService = paymentService;
-        this.bankTransactionService = bankTransactionService;
+        this.ledger = ledger;
         this.stockService = stockService;
     }
 
@@ -76,41 +76,18 @@ public class OrderService {
         order.setOrderDate(LocalDate.now());
         order.setStatus(OrderStatus.PENDING);
         order.setOrderSource(request.getOrderSource());
-        order.setDeliveryCharge(request.getDelivery());
         order.setNotes(request.getNotes());
+        order.setItems(new ArrayList<>());
 
-        List<OrderItems> itemList = new ArrayList<>();
-        BigDecimal calculatedDiscount = BigDecimal.ZERO;
         Map<Long, Product> products = stockService.lock(productIds(request));
+        OrderPricing pricing = fillItems(order, request, products, false,
+                request.getDiscount(), request.getDelivery(), request.getDownPayment());
 
-        for (OrderItemRequest itemReq : request.getItems()) {
-            Product product = products.get(itemReq.getProductId());
-            stockService.take(product, itemReq.getQuantity());
-
-            OrderItems item = new OrderItems();
-            item.setOrder(order);
-            item.setProduct(product);
-            item.setUnitPrice(itemReq.getUnitPrice() == null ? product.getSellingPrice() : itemReq.getUnitPrice());
-            item.setQuantity(itemReq.getQuantity());
-
-            calculatedDiscount = calculatedDiscount.add(
-                    BigDecimal.valueOf(itemReq.getQuantity())
-                            .multiply(BigDecimal.valueOf(product.getDiscount()))
-            );
-
-            itemList.add(item);
-        }
-
-        order.setDiscount(request.getDiscount() + calculatedDiscount.doubleValue());
-        order.setTotalPrice(request.calculateTotalPriceERP() - order.getDiscount());
-
-        order.setItems(itemList);
         Order savedOrder = orderRepository.save(order);
         System.out.println("[" + getTimestamp() + "] SUCCESS: ERP Order #" + savedOrder.getId() + " saved.");
 
         invoiceService.generateInvoice(savedOrder.getId());
-
-        processFinance(savedOrder.getId(), request.getDownPayment(), request.getPaymentMethod(), request.getBankAccountId(), "ERP Down Payment");
+        ledger.recordDownPayment(savedOrder, pricing.downPayment(), request.getPaymentMethod(), request.getBankAccountId());
 
         return savedOrder;
     }
@@ -121,54 +98,24 @@ public class OrderService {
         System.out.println("[" + getTimestamp() + "] INFO: Starting E-Commerce Order for Customer ID: " + customerId);
         Customer customer = customerService.getCustomerByID(customerId);
 
-        Map<Long, Product> productMap = stockService.lock(productIds(request));
-
         Order order = new Order();
         order.setCustomer(customer);
         order.setOrderDate(LocalDate.now());
         order.setStatus(OrderStatus.PENDING);
         order.setOrderSource(request.getOrderSource());
-        order.setDeliveryCharge(EgyptGovernorates.getDeliveryPrice(customer.getGovernorate()));
         order.setNotes(request.getNotes());
+        order.setItems(new ArrayList<>());
 
-        List<OrderItems> orderItemsList = new ArrayList<>();
-        BigDecimal calculatedTotal = BigDecimal.ZERO;
-        BigDecimal calculatedDiscount = BigDecimal.ZERO;
-
-        for (OrderItemRequest itemReq : request.getItems()) {
-            Product product = productMap.get(itemReq.getProductId());
-            stockService.take(product, itemReq.getQuantity());
-
-            // todo:  - product.getDiscount()
-            BigDecimal unitPrice = BigDecimal.valueOf(product.getSellingPrice());
-            calculatedTotal = calculatedTotal.add(unitPrice.multiply(BigDecimal.valueOf(itemReq.getQuantity())));
-
-            calculatedDiscount = calculatedDiscount.add(
-                    BigDecimal.valueOf(itemReq.getQuantity())
-                            .multiply(BigDecimal.valueOf(product.getDiscount()))
-            );
-
-            OrderItems item = new OrderItems();
-            item.setOrder(order);
-            item.setProduct(product);
-            item.setUnitPrice(product.getSellingPrice());
-            item.setQuantity(itemReq.getQuantity());
-            orderItemsList.add(item);
-        }
-
-        order.setDiscount(calculatedDiscount.doubleValue());
-
-        BigDecimal finalTotal = calculatedTotal.add(BigDecimal.valueOf(EgyptGovernorates.getDeliveryPrice(customer.getGovernorate())))
-                .subtract(BigDecimal.valueOf(request.getDownPayment())).subtract(
-                        calculatedDiscount
-                );
-        order.setTotalPrice(finalTotal.doubleValue());
-        order.setItems(orderItemsList);
+        // Store customers can't set prices or extra discounts; delivery comes from their governorate.
+        Map<Long, Product> products = stockService.lock(productIds(request));
+        OrderPricing pricing = fillItems(order, request, products, true,
+                0, EgyptGovernorates.getDeliveryPrice(customer.getGovernorate()), request.getDownPayment());
 
         Order savedOrder = orderRepository.save(order);
         System.out.println("[" + getTimestamp() + "] SUCCESS: E-Commerce Order #" + savedOrder.getId() + " saved.");
 
-        processPostOrderIntegrations(request, savedOrder);
+        invoiceService.generateInvoice(savedOrder.getId());
+        ledger.recordDownPayment(savedOrder, pricing.downPayment(), request.getPaymentMethod(), request.getBankAccountId());
 
         List<String> attachments = new ArrayList<>();
         try {
@@ -182,54 +129,6 @@ public class OrderService {
         return savedOrder;
     }
 
-    private void processPostOrderIntegrations(CreateOrderRequest request, Order savedOrder) {
-        System.out.println("[" + getTimestamp() + "] INFO: Integration processing for Order #" + savedOrder.getId());
-        invoiceService.generateInvoice(savedOrder.getId());
-
-        BigDecimal depositAmount = BigDecimal.valueOf(request.getDownPayment());
-        if (request.getBankAccountId() != null && request.getBankAccountId() == 3L) {
-            depositAmount = depositAmount.subtract(BigDecimal.valueOf(5));
-        }
-
-        BankTransactionDTO bankTx = new BankTransactionDTO();
-        bankTx.setBankAccountId(request.getBankAccountId());
-        bankTx.setTransactionType("Deposit");
-        bankTx.setReferenceType("Order");
-        bankTx.setReferenceId(savedOrder.getId());
-        bankTx.setCategoryId(1L);
-        bankTx.setDescription("Down payment for order #" + savedOrder.getId());
-        bankTx.setAmount(depositAmount);
-        bankTransactionService.createTransaction(bankTx);
-
-        CreatePaymentRequest payReq = new CreatePaymentRequest();
-        payReq.setOrderId(savedOrder.getId());
-        payReq.setAmountPaid(request.getDownPayment());
-        payReq.setPaymentMethod(request.getPaymentMethod());
-        payReq.setPaymentStatus("Completed");
-        paymentService.createPayment(payReq);
-    }
-
-    private void processFinance(Long orderId, Double downPayment, String method, Long bankId, String desc) {
-        System.out.println("[" + getTimestamp() + "] INFO: Finance Entry - Order #" + orderId + ", Amount: " + downPayment + ", bankId: " + bankId);
-        BankTransactionDTO bankTx = new BankTransactionDTO();
-        bankId = (bankId != null) ? bankId : 1L;
-        bankTx.setBankAccountId( bankId);
-        bankTx.setTransactionType("Deposit");
-        bankTx.setReferenceType("Order");
-        bankTx.setReferenceId(orderId);
-        bankTx.setCategoryId(1L);
-        bankTx.setDescription(desc + " #" + orderId);
-        bankTx.setAmount(BigDecimal.valueOf(bankId == 3L ? downPayment - 5 : downPayment));
-        bankTransactionService.createTransaction(bankTx);
-
-        CreatePaymentRequest payReq = new CreatePaymentRequest();
-        payReq.setOrderId(orderId);
-        payReq.setAmountPaid(downPayment);
-        payReq.setPaymentMethod(method);
-        payReq.setPaymentStatus("Completed");
-        paymentService.createPayment(payReq);
-    }
-
     @Transactional
     public Order updateOrder(Long orderId, CreateOrderRequest request) {
         System.out.println("[" + getTimestamp() + "] WARN: Processing update for Order #" + orderId);
@@ -239,13 +138,9 @@ public class OrderService {
                     + " and can no longer be edited.");
         }
 
-        // Update fields
         existingOrder.setOrderSource(request.getOrderSource());
         existingOrder.setCustomer(customerService.getCustomerByID(request.getCustomerId()));
-        existingOrder.setDeliveryCharge(request.getDelivery());
-        existingOrder.setDiscount(request.getDiscount());
         existingOrder.setNotes(request.getNotes());
-        existingOrder.setTotalPrice(request.calculateTotalPriceERP() - request.getDiscount());
 
         // Lock old and new products together, return the old lines, then take the new ones.
         // Any failure rolls back the whole edit, so stock is never left half-updated.
@@ -255,26 +150,50 @@ public class OrderService {
 
         stockService.putBackAll(existingOrder.getItems());
         existingOrder.getItems().clear();
+        OrderPricing pricing = fillItems(existingOrder, request, products, false,
+                request.getDiscount(), request.getDelivery(), request.getDownPayment());
+
+        Order savedOrder = orderRepository.save(existingOrder);
+        invoiceService.regenerateInvoice(savedOrder.getId());
+        ledger.replaceDownPayment(savedOrder, pricing.downPayment(), request.getPaymentMethod(), request.getBankAccountId());
+
+        System.out.println("[" + getTimestamp() + "] SUCCESS: Order #" + orderId + " updated successfully.");
+        return savedOrder;
+    }
+
+    /**
+     * Takes stock for every requested line, adds the lines to the order and applies
+     * {@link OrderPricing}. Store orders always use the catalogue price; ERP orders may
+     * override it per line. Product discounts apply to both.
+     */
+    private OrderPricing fillItems(Order order, CreateOrderRequest request, Map<Long, Product> products,
+                                   boolean catalogPricesOnly, double orderDiscount, double delivery, double downPayment) {
+        List<OrderPricing.Line> lines = new ArrayList<>();
         for (OrderItemRequest itemReq : request.getItems()) {
             Product product = products.get(itemReq.getProductId());
             stockService.take(product, itemReq.getQuantity());
 
+            double unitPrice = catalogPricesOnly || itemReq.getUnitPrice() == null
+                    ? product.getSellingPrice() : itemReq.getUnitPrice();
+            if (unitPrice < 0) {
+                throw new ValidationException("items", "The price of '" + product.getName() + "' can't be negative.");
+            }
+            double unitDiscount = product.getDiscount() != null ? product.getDiscount() : 0;
+            lines.add(new OrderPricing.Line(unitPrice, itemReq.getQuantity(), unitDiscount));
+
             OrderItems item = new OrderItems();
-            item.setOrder(existingOrder);
+            item.setOrder(order);
             item.setProduct(product);
+            item.setUnitPrice(unitPrice);
             item.setQuantity(itemReq.getQuantity());
-            item.setUnitPrice(itemReq.getUnitPrice() != null ? itemReq.getUnitPrice() : product.getSellingPrice());
-            existingOrder.getItems().add(item);
+            order.getItems().add(item);
         }
 
-        Order savedOrder = orderRepository.save(existingOrder);
-        invoiceService.regenerateInvoice(savedOrder.getId());
-        paymentService.deletePaymentsByOrderId(savedOrder.getId());
-
-        processFinance(savedOrder.getId(), request.getDownPayment(), request.getPaymentMethod(), request.getBankAccountId(), "Updated Order Down Payment");
-
-        System.out.println("[" + getTimestamp() + "] SUCCESS: Order #" + orderId + " updated successfully.");
-        return savedOrder;
+        OrderPricing pricing = OrderPricing.calculate(lines, orderDiscount, delivery, downPayment);
+        order.setDeliveryCharge(pricing.delivery().doubleValue());
+        order.setDiscount(pricing.totalDiscount().doubleValue());
+        order.setTotalPrice(pricing.amountDue().doubleValue());
+        return pricing;
     }
 
     @Transactional
@@ -296,15 +215,7 @@ public class OrderService {
         existingOrder.setStatus(target);
 
         if (target == OrderStatus.COMPLETED) {
-            BankTransactionDTO bankTx = new BankTransactionDTO();
-            bankTx.setBankAccountId(bankAccountId);
-            bankTx.setTransactionType("Deposit");
-            bankTx.setReferenceType("Order");
-            bankTx.setReferenceId(orderId);
-            bankTx.setCategoryId(1L);
-            bankTx.setDescription("Order #" + orderId + " Final Payment");
-            bankTx.setAmount(BigDecimal.valueOf(existingOrder.getTotalPrice()));
-            bankTransactionService.createTransaction(bankTx);
+            ledger.recordFinalPayment(existingOrder, bankAccountId);
         } else if (target == OrderStatus.PROCESSING) {
             emailService.sendOrderProcessingEmail(
                     existingOrder.getCustomer().getEmail(),
@@ -373,7 +284,6 @@ public class OrderService {
         dto.setNotes(order.getNotes());
         if (!payments.isEmpty()) {
             dto.setPaymentMethod(payments.getFirst().getPaymentMethod());
-            dto.setDownPayment(payments.getFirst().getAmountPaid());
         }
         dto.setOrderDate(order.getOrderDate());
         dto.setStatus(order.getStatus());
@@ -381,7 +291,7 @@ public class OrderService {
         dto.setOrderSource(order.getOrderSource());
         dto.setDiscount(order.getDiscount());
         dto.setDelivery(order.getDeliveryCharge());
-        dto.setTotalPrice(BigDecimal.valueOf(order.getTotalPrice()));
+        dto.applyTotals(order);
 
         Customer c = order.getCustomer();
         if (c != null) {
@@ -422,6 +332,7 @@ public class OrderService {
             stockService.putBackAll(order.getItems());
         }
 
+        ledger.reverseAll(order, "order deleted");
         paymentService.deletePaymentsByOrderId(orderId);
         invoiceService.deleteInvoiceByOrderId(orderId);
         orderRepository.delete(order);
@@ -437,6 +348,7 @@ public class OrderService {
         stockService.lock(order.getItems().stream().map(i -> i.getProduct().getProductID()).toList());
         stockService.putBackAll(order.getItems());
 
+        ledger.reverseAll(order, "order cancelled");
         paymentService.cancelPaymentsByOrderId(orderId);
         order.setStatus(OrderStatus.CANCELLED);
             emailService.sendOrderCancellationEmail(

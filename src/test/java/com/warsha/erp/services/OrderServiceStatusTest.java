@@ -1,6 +1,5 @@
 package com.warsha.erp.services;
 
-import com.warsha.erp.dtos.BankTransactionDTO;
 import com.warsha.erp.entities.Customer;
 import com.warsha.erp.entities.Order;
 import com.warsha.erp.entities.OrderStatus;
@@ -11,11 +10,9 @@ import com.warsha.erp.repository.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
-import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.Optional;
 
@@ -32,7 +29,7 @@ class OrderServiceStatusTest {
     @Mock InvoiceService invoiceService;
     @Mock EmailService emailService;
     @Mock PaymentService paymentService;
-    @Mock BankTransactionService bankTransactionService;
+    @Mock OrderLedgerService ledger;
     @Mock StockService stockService;
 
     OrderService service;
@@ -40,7 +37,7 @@ class OrderServiceStatusTest {
     @BeforeEach
     void setUp() {
         service = new OrderService(orderRepository, customerService,
-                invoiceService, emailService, paymentService, bankTransactionService, stockService);
+                invoiceService, emailService, paymentService, ledger, stockService);
     }
 
     private Order order(OrderStatus status) {
@@ -73,7 +70,7 @@ class OrderServiceStatusTest {
         Order saved = service.updateOrderStatus(12L, OrderStatus.SHIPPED, null);
 
         assertThat(saved.getStatus()).isEqualTo(OrderStatus.SHIPPED);
-        verifyNoInteractions(bankTransactionService);
+        verifyNoInteractions(ledger);
     }
 
     @Test
@@ -91,7 +88,7 @@ class OrderServiceStatusTest {
         assertThatThrownBy(() -> service.updateOrderStatus(12L, OrderStatus.COMPLETED, 1L))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessage("Order #12 is already completed.");
-        verifyNoInteractions(bankTransactionService);
+        verifyNoInteractions(ledger);
     }
 
     @Test
@@ -99,7 +96,7 @@ class OrderServiceStatusTest {
         order(OrderStatus.SHIPPED);
         assertThatThrownBy(() -> service.updateOrderStatus(12L, OrderStatus.COMPLETED, null))
                 .isInstanceOf(ValidationException.class);
-        verifyNoInteractions(bankTransactionService);
+        verifyNoInteractions(ledger);
     }
 
     @Test
@@ -107,12 +104,9 @@ class OrderServiceStatusTest {
         order(OrderStatus.SHIPPED);
         when(orderRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
 
-        service.updateOrderStatus(12L, OrderStatus.COMPLETED, 2L);
+        Order saved = service.updateOrderStatus(12L, OrderStatus.COMPLETED, 2L);
 
-        ArgumentCaptor<BankTransactionDTO> tx = ArgumentCaptor.forClass(BankTransactionDTO.class);
-        verify(bankTransactionService).createTransaction(tx.capture());
-        assertThat(tx.getValue().getBankAccountId()).isEqualTo(2L);
-        assertThat(tx.getValue().getAmount()).isEqualByComparingTo(BigDecimal.valueOf(450.0));
+        verify(ledger).recordFinalPayment(saved, 2L);
     }
 
     @Test
@@ -142,6 +136,7 @@ class OrderServiceStatusTest {
 
         assertThat(saved.getStatus()).isEqualTo(OrderStatus.CANCELLED);
         verify(paymentService).cancelPaymentsByOrderId(12L);
+        verify(ledger).reverseAll(saved, "order cancelled");
     }
 
     @Test
