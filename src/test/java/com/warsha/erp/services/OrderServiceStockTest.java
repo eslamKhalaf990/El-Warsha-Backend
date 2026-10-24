@@ -1,6 +1,6 @@
 package com.warsha.erp.services;
 
-import com.warsha.erp.dtos.CreateOrderRequest;
+import com.warsha.erp.dtos.OrderRequest;
 import com.warsha.erp.dtos.OrderItemRequest;
 import com.warsha.erp.entities.*;
 import com.warsha.erp.exceptions.BusinessRuleException;
@@ -50,8 +50,8 @@ class OrderServiceStockTest {
         when(customerService.getCustomerByID(any())).thenReturn(new Customer());
     }
 
-    private static CreateOrderRequest request(long[][] lines) {
-        CreateOrderRequest r = new CreateOrderRequest();
+    private static OrderRequest request(long[][] lines) {
+        OrderRequest r = new OrderRequest();
         List<OrderItemRequest> items = new ArrayList<>();
         for (long[] line : lines) {
             OrderItemRequest i = new OrderItemRequest();
@@ -115,7 +115,7 @@ class OrderServiceStockTest {
 
     @Test
     void missingQuantityIsRejected() {
-        CreateOrderRequest r = request(new long[][]{{1, 1}});
+        OrderRequest r = request(new long[][]{{1, 1}});
         r.getItems().get(0).setQuantity(null);
         assertThatThrownBy(() -> service.createOrder(r)).isInstanceOf(ValidationException.class);
     }

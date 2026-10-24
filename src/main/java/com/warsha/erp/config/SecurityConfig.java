@@ -93,9 +93,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/feedbacks/*").permitAll()
                         .requestMatchers(HttpMethod.POST, "/feedbacks", "/feedbacks/*/comments").permitAll()
 
-                        // --- CUSTOMER: own orders ---
-                        .requestMatchers(HttpMethod.POST, "/orders/placeOrder").hasRole(CUSTOMER)
-                        .requestMatchers(HttpMethod.GET, "/orders/customer").hasRole(CUSTOMER)
+                        // --- CUSTOMER: own orders (placeOrder / customer are the pre-v2 paths) ---
+                        .requestMatchers(HttpMethod.POST, "/orders/checkout", "/orders/placeOrder").hasRole(CUSTOMER)
+                        .requestMatchers(HttpMethod.GET, "/orders/mine", "/orders/customer").hasRole(CUSTOMER)
                         .requestMatchers(HttpMethod.POST, "/vouchers/validate").hasAnyRole(CUSTOMER, ADMIN)
 
                         // --- ADMIN: the whole ERP, including /auth/register and invoice PDFs ---

@@ -140,9 +140,30 @@ class OrderServiceStatusTest {
     }
 
     @Test
+    void listRejectsReversedDateRange() {
+        assertThatThrownBy(() -> service.listOrders(java.time.LocalDate.of(2026, 5, 10), java.time.LocalDate.of(2026, 5, 1), null))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("The end date can't be before the start date.");
+    }
+
+    @Test
+    void listRejectsRangesLongerThanAYear() {
+        assertThatThrownBy(() -> service.listOrders(java.time.LocalDate.of(2025, 1, 1), java.time.LocalDate.of(2026, 1, 2), null))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("Choose a date range of at most one year.");
+    }
+
+    @Test
+    void creatingWithoutACustomerIsAValidationError() {
+        assertThatThrownBy(() -> service.createOrder(new com.warsha.erp.dtos.OrderRequest()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("Choose a customer for the order.");
+    }
+
+    @Test
     void shippedOrdersCannotBeEdited() {
         order(OrderStatus.SHIPPED);
-        assertThatThrownBy(() -> service.updateOrder(12L, new com.warsha.erp.dtos.CreateOrderRequest()))
+        assertThatThrownBy(() -> service.updateOrder(12L, new com.warsha.erp.dtos.OrderRequest()))
                 .isInstanceOf(BusinessRuleException.class)
                 .hasMessage("Order #12 is shipped and can no longer be edited.");
     }

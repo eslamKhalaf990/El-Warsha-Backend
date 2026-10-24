@@ -51,7 +51,7 @@ class GlobalExceptionHandlerTest {
         }
 
         @PostMapping("/status")
-        void status(@RequestBody com.warsha.erp.dtos.UpdateOrderStatus body) {
+        void status(@RequestBody com.warsha.erp.dtos.OrderStatusRequest body) {
         }
     }
 

@@ -38,8 +38,8 @@ class SecurityConfigTest {
         @DeleteMapping("/products") String deleteProducts() { return "ok"; }
         @GetMapping("/customers") String customers() { return "ok"; }
         @GetMapping("/orders") String orders() { return "ok"; }
-        @PostMapping("/orders/placeOrder") String placeOrder() { return "ok"; }
-        @GetMapping("/orders/customer") String customerOrders() { return "ok"; }
+        @PostMapping({"/orders/checkout", "/orders/placeOrder"}) String placeOrder() { return "ok"; }
+        @GetMapping({"/orders/mine", "/orders/customer"}) String customerOrders() { return "ok"; }
         @PostMapping("/auth/register") String register() { return "ok"; }
         @DeleteMapping("/api/bank/resetTransactions") String reset() { return "ok"; }
         @GetMapping("/invoice/pdf/{id}") String invoice(@PathVariable Long id) { return "ok"; }
@@ -105,6 +105,9 @@ class SecurityConfigTest {
     void customerCanUseStorefrontOrderEndpoints() throws Exception {
         mvc.perform(post("/orders/placeOrder").header("Authorization", customerToken)).andExpect(status().isOk());
         mvc.perform(get("/orders/customer").header("Authorization", customerToken)).andExpect(status().isOk());
+        mvc.perform(post("/orders/checkout").header("Authorization", customerToken)).andExpect(status().isOk());
+        mvc.perform(get("/orders/mine").header("Authorization", customerToken)).andExpect(status().isOk());
+        mvc.perform(get("/orders/mine").header("Authorization", adminToken)).andExpect(status().isForbidden());
     }
 
     @Test
