@@ -101,6 +101,25 @@ class OrderLedgerServiceTest {
     }
 
     @Test
+    void editingWithoutABankAccountKeepsTheMoneyWhereItIs() {
+        ledger.recordDownPayment(order, new BigDecimal("200"), "Wallet", 2L);
+
+        ledger.replaceDownPayment(order, new BigDecimal("200"), "Wallet", null);
+
+        assertThat(bank).hasSize(1);
+        assertThat(held()).containsExactlyEntriesOf(Map.of(2L, new BigDecimal("200.00")));
+    }
+
+    @Test
+    void editingTheAmountWithoutABankAccountStaysInTheSameAccount() {
+        ledger.recordDownPayment(order, new BigDecimal("200"), "Wallet", 2L);
+
+        ledger.replaceDownPayment(order, new BigDecimal("300"), "Wallet", null);
+
+        assertThat(held()).containsExactlyEntriesOf(Map.of(2L, new BigDecimal("300.00")));
+    }
+
+    @Test
     void cancellingRefundsEverythingOnce() {
         ledger.recordDownPayment(order, new BigDecimal("200"), "Cash", 1L);
 

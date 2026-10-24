@@ -62,10 +62,14 @@ public class OrderLedgerService {
     /**
      * Replaces the down payment of an edited order. If the money in the bank already
      * matches, the ledger is left untouched; otherwise the old entries are reversed
-     * and the new down payment is deposited.
+     * and the new down payment is deposited. Without a bank account the down payment
+     * stays in the account that already holds it.
      */
     public void replaceDownPayment(Order order, BigDecimal amount, String paymentMethod, Long bankAccountId) {
-        long accountId = bankAccountId != null ? bankAccountId : DEFAULT_BANK_ACCOUNT_ID;
+        Map<Long, BigDecimal> current = netByAccount(order.getId());
+        // No account given (e.g. the edit screen): keep the money where it already is.
+        long accountId = bankAccountId != null ? bankAccountId
+                : current.size() == 1 ? current.keySet().iterator().next() : DEFAULT_BANK_ACCOUNT_ID;
         Map<Long, BigDecimal> expected = new TreeMap<>();
         BigDecimal net = afterFee(amount, accountId);
         if (net.signum() > 0) expected.put(accountId, net);
@@ -78,7 +82,7 @@ public class OrderLedgerService {
         payment.setPaymentStatus("Completed");
         paymentService.createPayment(payment);
 
-        if (expected.equals(netByAccount(order.getId()))) return;
+        if (expected.equals(current)) return;
         reverseAll(order, "order edited");
         deposit(order, amount, accountId, "Down payment for order #" + order.getId() + " (edited)");
     }

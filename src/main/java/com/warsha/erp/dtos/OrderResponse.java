@@ -18,7 +18,10 @@ public class OrderResponse {
     /** Statuses this order may move to next; empty once Completed or Cancelled. */
     private List<OrderStatus> allowedNextStatuses = List.of();
 
+    /** Total discount: product discounts + {@link #extraDiscount}. */
     private double discount;
+    /** The discount typed by staff on top of product discounts; what the edit form should show. */
+    private double extraDiscount;
     private double delivery;
     /** Amount still to collect (same as {@link #amountDue}); kept for existing clients. */
     private BigDecimal totalPrice;
@@ -34,15 +37,22 @@ public class OrderResponse {
     private CustomerDto customer;
     private List<OrderItemDto> orderItems;
 
-    /** Fills totalPrice, amountDue, grandTotal and downPayment from the stored order. */
+    /** Fills totalPrice, amountDue, grandTotal, downPayment and extraDiscount from the stored order. */
     public void applyTotals(Order order) {
         BigDecimal itemsTotal = BigDecimal.ZERO;
+        BigDecimal productDiscounts = BigDecimal.ZERO;
         if (order.getItems() != null) {
             for (var item : order.getItems()) {
-                itemsTotal = itemsTotal.add(BigDecimal.valueOf(item.getUnitPrice())
-                        .multiply(BigDecimal.valueOf(item.getQuantity())));
+                BigDecimal qty = BigDecimal.valueOf(item.getQuantity());
+                itemsTotal = itemsTotal.add(BigDecimal.valueOf(item.getUnitPrice()).multiply(qty));
+                Double unitDiscount = item.getProduct() != null ? item.getProduct().getDiscount() : null;
+                if (unitDiscount != null) {
+                    productDiscounts = productDiscounts.add(BigDecimal.valueOf(unitDiscount).multiply(qty));
+                }
             }
         }
+        BigDecimal extra = BigDecimal.valueOf(order.getDiscount()).subtract(productDiscounts);
+        setExtraDiscount(extra.max(BigDecimal.ZERO).setScale(2, RoundingMode.HALF_UP).doubleValue());
         BigDecimal due = BigDecimal.valueOf(order.getTotalPrice()).setScale(2, RoundingMode.HALF_UP);
         BigDecimal grand = itemsTotal
                 .subtract(BigDecimal.valueOf(order.getDiscount()))
