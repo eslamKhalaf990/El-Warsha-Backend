@@ -134,8 +134,7 @@ public class OrderService {
             log.warn("Could not store receipt images for order #{}: {}", saved.getId(), e.getMessage());
         }
         List<String> files = attachments;
-        afterCommit(() -> emailService.sendNewOrderNotification(
-                customer.getFullName(), saved.getId().toString(), saved.getTotalPrice(), files));
+        afterCommit(() -> emailService.sendNewOrderNotification(saved, request, files));
 
         return saved;
     }

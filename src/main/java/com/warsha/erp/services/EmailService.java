@@ -1,11 +1,17 @@
 package com.warsha.erp.services;
 
+import com.warsha.erp.dtos.OrderRequest;
+import com.warsha.erp.entities.Order;
+import com.warsha.erp.entities.OrderItems;
+import com.warsha.erp.entities.Product;
 import jakarta.mail.MessagingException;
 import jakarta.mail.internet.MimeMessage;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.mail.javamail.MimeMessageHelper;
 import org.springframework.stereotype.Service;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.FileSystemResource;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -13,18 +19,30 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 
 @Service
 public class EmailService {
 
+    private static final String FROM = "elwarsha77a@gmail.com";
+    private static final String FROM_NAME = "ورشة | El Warsha";
+    private static final String ORDERS_INBOX = "ahmednaser77a@gmail.com";
+    private static final ClassPathResource LOGO = new ClassPathResource("email/logo.png");
+
     @Autowired
     private final JavaMailSender javaMailSender;
+
+    @Value("${image.upload.dir:/root/warsha_images/}")
+    private String imageUploadDir;
 
     // Formatter for consistent log timestamps
     private final DateTimeFormatter logFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
@@ -49,30 +67,11 @@ public class EmailService {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-            helper.setFrom("elwarsha77a@gmail.com");
+            helper.setFrom(FROM, FROM_NAME);
             helper.setTo(toEmail);
-            helper.setSubject("رمز التحقق الخاص بك - OTP");
-
-            String htmlContent = """
-            <div dir="rtl" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #444; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 25px; text-align: right;">
-                <h2 style="color: #333; border-bottom: 2px solid #f4e4e4; padding-bottom: 10px;">رمز التحقق</h2>
-            
-                <p>استخدم رمز التحقق التالي لإكمال إجراءات التحقق الخاصة بك:</p>
-            
-                <div style="background-color: #fafafa; padding: 20px; border-radius: 8px; margin: 20px 0; border-right: 4px solid #d4a373; text-align: center;">
-                    <h1 style="margin: 0; color: #d4a373; letter-spacing: 5px;">%s</h1>
-                </div>
-            
-                <p>هذا الرمز صالح لفترة محدودة. لا تشارك هذا الرمز مع أي شخص.</p>
-            
-                <p style="margin-top: 30px;">شكراً لك،<br/><strong>فريق عمل ورشة</strong></p>
-            
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #999;">إذا لم تطلب هذا الرمز، يرجى تجاهل هذا البريد الإلكتروني.</p>
-            </div>
-            """.formatted(otp);
-
-            helper.setText(htmlContent, true);
+            helper.setSubject("رمز التحقق الخاص بك - ورشة");
+            helper.setText(EmailTemplates.otp(otp), true);
+            addLogo(helper);
 
             javaMailSender.send(message);
             System.out.println("[" + getTimestamp() + "] SUCCESS: OTP sent to " + toEmail);
@@ -115,50 +114,56 @@ public class EmailService {
         return tempPaths;
     }
 
-    public void sendNewOrderNotification(String customerName, String orderId, double orderTotal, List<String> imagePaths) {
+    public void sendNewOrderNotification(Order order, OrderRequest request, List<String> imagePaths) {
+        String orderId = String.valueOf(order.getId());
         System.out.println("[" + getTimestamp() + "] INFO: Preparing email notification for Order ID: " + orderId);
 
         try {
             MimeMessage message = javaMailSender.createMimeMessage();
-            MimeMessageHelper helper = new MimeMessageHelper(message, true);
+            MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-            helper.setFrom("elwarsha77a@gmail.com");
-            helper.setTo("ekhalaf990@gmail.com");
-//            helper.setTo("ahmednaser77a@gmail.com");
-            helper.setSubject("New Order Received! (ID: " + orderId + ")");
+            helper.setFrom(FROM, FROM_NAME);
+            helper.setTo(ORDERS_INBOX);
+            if (order.getCustomer().getEmail() != null && !order.getCustomer().getEmail().isBlank()) {
+                helper.setReplyTo(order.getCustomer().getEmail());
+            }
+            helper.setSubject("🛍️ طلب جديد #" + orderId + " - " + order.getCustomer().getFullName()
+                    + " - " + EmailTemplates.plainMoney(order.getTotalPrice()));
 
-            String emailBody = String.format("""
-            Hello Ahmed,
-            
-            Great news! You have received a new order.
-            
-            --------------------------------
-            Order ID:      %s
-            Customer Name: %s
-            Total Amount:  EGP %.2f
-            --------------------------------
-            
-            See the attached images for order details.
-            """, orderId, customerName, orderTotal);
-
-            helper.setText(emailBody);
-
-            int attachmentCount = 0;
-            if (imagePaths != null && !imagePaths.isEmpty()) {
+            List<FileSystemResource> attachments = new ArrayList<>();
+            if (imagePaths != null) {
                 for (String path : imagePaths) {
                     FileSystemResource file = new FileSystemResource(new File(path));
-
                     if (file.exists()) {
-                        helper.addAttachment(file.getFilename(), file);
-                        attachmentCount++;
+                        attachments.add(file);
                     } else {
                         System.out.println("[" + getTimestamp() + "] WARN: Attachment missing at path: " + path);
                     }
                 }
             }
 
+            // Product photos stored on this server are embedded next to each item
+            Map<Long, FileSystemResource> productImages = new LinkedHashMap<>();
+            for (OrderItems item : order.getItems()) {
+                FileSystemResource image = localProductImage(item.getProduct());
+                if (image != null) productImages.putIfAbsent(item.getProduct().getProductID(), image);
+            }
+            Map<Long, String> productImageCids = new HashMap<>();
+            productImages.keySet().forEach(id -> productImageCids.put(id, "product" + id));
+
+            helper.setText(
+                    EmailTemplates.newOrderAdminText(order, request, attachments.size()),
+                    EmailTemplates.newOrderAdmin(order, request, productImageCids, attachments.size(), LocalDateTime.now()));
+            addLogo(helper);
+            for (Map.Entry<Long, FileSystemResource> e : productImages.entrySet()) {
+                helper.addInline(productImageCids.get(e.getKey()), e.getValue());
+            }
+            for (FileSystemResource file : attachments) {
+                helper.addAttachment(file.getFilename(), file);
+            }
+
             javaMailSender.send(message);
-            System.out.println("[" + getTimestamp() + "] SUCCESS: Email sent for Order " + orderId + " with " + attachmentCount + " attachments.");
+            System.out.println("[" + getTimestamp() + "] SUCCESS: Email sent for Order " + orderId + " with " + attachments.size() + " attachments.");
 
         } catch (MessagingException e) {
             System.out.println("[" + getTimestamp() + "] ERROR: MessagingException while sending email: " + e.getMessage());
@@ -172,42 +177,11 @@ public class EmailService {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-            helper.setFrom("elwarsha77a@gmail.com");
-            helper.setTo(customerEmail); // Now sending to the actual customer
+            helper.setFrom(FROM, FROM_NAME);
+            helper.setTo(customerEmail);
             helper.setSubject("نحن نجهز طلبك بكل عناية ✨ رقم الطلب #" + orderId);
-
-            String htmlContent = """
-            <div dir="rtl" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #444; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 25px; text-align: right;">
-                <h2 style="color: #333; border-bottom: 2px solid #f4e4e4; padding-bottom: 10px;">شكراً لطلبك من ورشة، %s</h2>
-            
-                <p>يسعدنا إبلاغك أننا استلمنا طلبك رقم <strong>#%s</strong>، وفريقنا يعمل الآن على مراجعته وتجهيزه.</p>
-            
-                <div style="background-color: #fafafa; padding: 20px; border-radius: 8px; margin: 20px 0; border-right: 4px solid #d4a373;">
-                    <h3 style="margin-top: 0; color: #d4a373;">تفاصيل الطلب:</h3>
-                    <p style="margin: 5px 0;"><strong>رقم الطلب:</strong> %s</p>
-                    <p style="margin: 5px 0;"><strong>الإجمالي:</strong> %.2f جنيه مصري</p>
-                    <p style="margin: 5px 0;"><strong>الحالة:</strong> قيد المراجعة</p>
-                </div>
-            
-                <div style="background-color: #fff9f9; border: 1px solid #f2dede; color: #a94442; padding: 15px; border-radius: 8px; margin: 20px 0; font-size: 14px;">
-                    <strong>ملاحظة هامة:</strong>
-                    يرجى العلم أنه يجب تأكيد الطلب من خلال سداد "العربون". في حال عدم استلام مبلغ العربون خلال المدة المحددة، سيتم إلغاء الطلب تلقائياً من قِبل النظام.
-                </div>
-            
-                <p>بمجرد تأكيد الدفع وشحن الطلب، سنقوم بإرسال رسالة أخرى لتتبع الشحنة.</p>
-            
-                <p style="margin-top: 30px;">شكراً لاختيارك <strong>ورشة</strong>.</p>
-            
-                <div style="text-align: center; margin-top: 30px;">
-                <a href="https://el-warsha-accessories.web.app" style="background-color: #d4a373; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">تسوقي مرة أخرى</a>
-                </div>
-            
-                <hr style="border: 0; border-top: 1px solid #eee; margin: 20px 0;" />
-                <p style="font-size: 12px; color: #999;">إذا كان لديك أي استفسار حول كيفية سداد العربون أو تفاصيل طلبك، يمكنك الرد مباشرة على هذا البريد.</p>
-            </div>
-            """.formatted(customerName, orderId, orderId, orderTotal);
-
-            helper.setText(htmlContent, true); // The 'true' flag enables HTML rendering
+            helper.setText(EmailTemplates.orderProcessing(customerName, orderId, orderTotal), true);
+            addLogo(helper);
 
             javaMailSender.send(message);
             System.out.println("SUCCESS: Processing email sent to " + customerEmail);
@@ -222,40 +196,29 @@ public class EmailService {
             MimeMessage message = javaMailSender.createMimeMessage();
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
-            helper.setFrom("elwarsha77a@gmail.com");
+            helper.setFrom(FROM, FROM_NAME);
             helper.setTo(customerEmail);
             helper.setSubject("تحديث بخصوص طلبك رقم #" + orderId);
+            helper.setText(EmailTemplates.orderCancelled(customerName, orderId), true);
+            addLogo(helper);
 
-            String htmlContent = """
-        <div dir="rtl" style="font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; line-height: 1.6; color: #444; max-width: 600px; margin: 0 auto; border: 1px solid #eee; padding: 25px; text-align: right;">
-            <h2 style="color: #888; border-bottom: 2px solid #eee; padding-bottom: 10px;">تم إلغاء طلبك، %s</h2>
-        
-            <p>نحيطك علماً بأنه تم إلغاء طلبك رقم <strong>#%s</strong> بنجاح.</p>
-        
-            <div style="background-color: #fcfcfc; padding: 20px; border-radius: 8px; margin: 20px 0; border-right: 4px solid #888;">
-                <p style="margin: 5px 0;"><strong>رقم الطلب:</strong> %s</p>
-                <p style="margin: 5px 0;"><strong>حالة الطلب:</strong> ملغي</p>
-            </div>
-        
-            <p>غالباً ما يتم ذلك بسبب عدم استلام مبلغ العربون خلال المدة المحددة، أو بناءً على طلبك الشخصي.</p>
-        
-            <p style="margin-top: 20px;">نأمل أن نراكِ مجدداً في <strong>ورشة</strong> قريباً، قطعنا المميزة دائماً بانتظارك!</p>
-        
-            <div style="text-align: center; margin-top: 30px;">
-                <a href="https://el-warsha-accessories.web.app" style="background-color: #d4a373; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; font-weight: bold;">تسوقي مرة أخرى</a>
-            </div>
-        
-            <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0 20px 0;" />
-            <p style="font-size: 12px; color: #999;">إذا تم الإلغاء عن طريق الخطأ أو قمتِ بالفعل بتحويل العربون، يرجى التواصل معنا فوراً عبر الرد على هذا البريد.</p>
-        </div>
-        """.formatted(customerName, orderId, orderId);
-
-            helper.setText(htmlContent, true);
             javaMailSender.send(message);
             System.out.println("SUCCESS: Cancellation email sent to " + customerEmail);
 
         } catch (Exception e) {
             System.err.println("ERROR: Failed to send cancellation email: " + e.getMessage());
         }
+    }
+
+    private void addLogo(MimeMessageHelper helper) throws MessagingException {
+        helper.addInline(EmailTemplates.LOGO_CID, LOGO, "image/png");
+    }
+
+    /** DB value "/images/abc.jpg" -> file in image.upload.dir (see ImageConfig); Drive-hosted images are skipped. */
+    private FileSystemResource localProductImage(Product product) {
+        String url = product == null ? null : product.getImageUrl();
+        if (url == null || !url.startsWith("/images/")) return null;
+        FileSystemResource file = new FileSystemResource(Paths.get(imageUploadDir, url.substring("/images/".length())));
+        return file.exists() ? file : null;
     }
 }
