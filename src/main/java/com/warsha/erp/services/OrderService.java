@@ -195,7 +195,7 @@ public class OrderService {
             System.out.println("[" + getTimestamp() + "] ERROR: Image temp storage failed: " + e.getMessage());
         }
 
-        emailService.sendNewOrderNotification(customer.getFullName(), savedOrder.getId().toString(), savedOrder.getTotalPrice(), attachments);
+        emailService.sendNewOrderNotification(savedOrder, request, attachments);
 
         return savedOrder;
     }
