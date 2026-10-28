@@ -261,18 +261,35 @@ For logged-in customers wishing to update their password.
 - **Auth Required**: No
 
 #### Response `200 OK`
+In creation order. `productCount` counts products that are not deleted; `description` and `imageUrl` may be `null`.
 ```json
 [
   {
     "categoryId": 1,
-    "name": "Wooden Tables"
+    "name": "Wooden Tables",
+    "description": "Solid oak",
+    "imageUrl": null,
+    "productCount": 9
   },
   {
     "categoryId": 2,
-    "name": "Chairs & Armchairs"
+    "name": "Chairs & Armchairs",
+    "description": null,
+    "imageUrl": null,
+    "productCount": 0
   }
 ]
 ```
+
+#### Managing categories (ERP admin)
+
+| Method | Endpoint | Auth | Body | Success | Errors |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `POST` | `/category` | Admin | `{ "name": "Rings", "description": "optional" }` | `201` + the category | `400 VALIDATION_FAILED` (name missing / over 100 chars, description over 255), `409 CONFLICT` with `details[0].field = "name"` if the name exists (case and extra spaces ignored) |
+| `PUT` | `/category/{id}` | Admin | same as POST | `200` + the category | as POST, plus `404 NOT_FOUND` |
+| `DELETE` | `/category/{id}` | Admin | — | `204` | `404 NOT_FOUND`; `409 CONFLICT` while products (including deleted ones kept for order history) still belong to it — the message says how many |
+
+Names are stored trimmed, with repeated spaces collapsed.
 
 ---
 
@@ -615,16 +632,79 @@ Standard `ApiError` body:
 
 ### 4.4 Managing Shipping Zones (ERP admin)
 
-| Method | Endpoint | Auth | Body / Params | Notes |
-| :--- | :--- | :--- | :--- | :--- |
-| `GET` | `/shipping` | Admin | — | All zones, active and inactive: `{id, cityName, shippingFee, isActive, …}` |
-| `POST` | `/shipping` | Admin | `{ "cityName": "مطروح", "shippingFee": 130 }` | `409 CONFLICT` if the governorate already has a zone (spelling variants count as the same) |
-| `PUT` | `/shipping/{id}?shippingFee=95` | Admin | — | Changes the price; applies to the store immediately |
-| `DELETE` | `/shipping/{id}` | Admin | — | Customers in that governorate can no longer check out |
+| Method | Endpoint | Auth | Body | Success | Errors |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/shipping` | Admin | — | `200` all zones, active and inactive: `{id, cityName, shippingFee, isActive, …}` | — |
+| `GET` | `/shipping/{id}` | Admin | — | `200` the zone | `404 NOT_FOUND` |
+| `POST` | `/shipping` | Admin | `{ "cityName": "مطروح", "shippingFee": 130, "isActive": true }` | `201` + the zone | `400 VALIDATION_FAILED` (name missing / over 100 chars, price missing, negative or more than 2 decimals); `409 CONFLICT` with `details[0].field = "cityName"` if the governorate already has a zone (spelling variants count as the same) |
+| `PUT` | `/shipping/{id}` | Admin | same as POST (`isActive` optional, keeps its value when left out) | `200` + the zone | as POST, plus `404` |
+| `DELETE` | `/shipping/{id}` | Admin | — | `204` | `404` |
 
-Prices must be `0` or more (`400 VALIDATION_FAILED` otherwise).
+**Breaking change:** `PUT /shipping/{id}` takes a JSON body instead of `?shippingFee=`. Price changes apply to the store immediately. Setting `isActive: false` hides a governorate from the store without losing its price; deleting it means customers there can no longer check out.
 
 The initial zones are created by `schema-sync-shipping-zones.sql`, which only fills in governorates that don't have a zone yet; prices edited in the ERP are never overwritten.
+
+---
+
+### 4.5 Vendors / Suppliers (ERP admin)
+
+| Method | Endpoint | Auth | Body / Params | Success | Errors |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/vendors` | Admin | `?includeArchived=true` to also list archived vendors | `200` list | — |
+| `POST` | `/vendors` | Admin | `{ "name", "phone", "email", "address", "taxNumber", "contactPerson", "notes" }` — only `name` is required | `201` + the vendor | `400 VALIDATION_FAILED` per field; `409 CONFLICT` (`details[0].field = "name"`) if an active vendor has that name |
+| `PUT` | `/vendors/{id}` | Admin | same as POST | `200` + the vendor | as POST, plus `404 NOT_FOUND` |
+| `DELETE` | `/vendors/{id}` | Admin | — | `204` | `404 NOT_FOUND` |
+
+`DELETE` **archives** the vendor (`isActive: false`): it disappears from the default list but the record is kept. Field limits: name 200, phone 50 (digits with optional `+`, spaces, `-`, brackets), email 255 (must be valid), address 300, taxNumber 50, contactPerson 100, notes 2000. Blank fields are stored as `null`.
+
+---
+
+### 4.6 Customers (ERP admin)
+
+Responses never include `password`, `otp` or `otpExpirationTime`.
+
+| Method | Endpoint | Auth | Body | Success | Errors |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/customers` | Admin | — | `200` newest first: `{id, fullName, governorate, phone, city, secondaryPhone, address, email, createdAt, updatedAt, status}` | — |
+| `GET` | `/customers/{id}` | Admin | — | `200` the customer | `404 NOT_FOUND` |
+| `POST` | `/customers` | Admin | `{ "fullName", "phone", "governorate", "secondaryPhone", "city", "address", "email" }` | `201` + the customer | `400 VALIDATION_FAILED` per field; `409 CONFLICT` on `phone` or `email` when another customer has it |
+| `PUT` | `/customers/{id}` | Admin | same as POST | `200` + the customer | as POST, plus `404` |
+| `DELETE` | `/customers/{id}` | Admin | — | `204` | `404`; `409 CONFLICT` while the customer has orders, reviews or account history |
+
+Rules: `phone` must be an Egyptian mobile (`01[0125]` + 8 digits); `+20`/`0020`, spaces and dashes are accepted and stored as `01…`. `governorate` must match a shipping zone (spelling variants allowed). Staff-entered customers get no verification email. `DELETE /customers` (delete every customer) was removed.
+
+---
+
+### 4.7 Products (ERP admin)
+
+`POST /products` and `PUT /products/{id}` are multipart: a `product` part holding JSON, and an `image` part (required on create; on update it replaces the cover only when sent).
+
+```json
+{ "name": "Silver ring", "nameAr": "خاتم فضة", "description": "…", "descriptionAr": "…",
+  "buyingPrice": 100, "sellingPrice": 250, "discount": 0, "quantity": 7, "categoryId": 3 }
+```
+
+| Method | Endpoint | Success | Errors |
+| :--- | :--- | :--- | :--- |
+| `POST` | `/products` | `201` + the product (same shape as `GET /products/{id}`) | `400 VALIDATION_FAILED` per field (`name` ≤ 100, `nameAr` ≤ 255, `description` ≤ 500, prices required and ≥ 0, `discount` ≤ `sellingPrice`, `quantity` ≥ 0, `categoryId` must exist, `image` required); `400 MALFORMED_REQUEST` if the JSON part can't be read |
+| `PUT` | `/products/{id}` | `200` + the product | as POST (image optional), plus `404`. `quantity` is ignored when the product has sizes/colors |
+| `DELETE` | `/products/{id}` | `204` (soft delete; order history keeps the product) | `404` |
+| `PUT` | `/products/{id}/image` `{ "filename": "abc.jpg" }` | `200` + the product | `400` on `filename` if it isn't in the library; `404` |
+
+**Breaking change:** the JSON part takes `categoryId` instead of `category: {categoryId}`, and numbers instead of strings. `DELETE /products` (delete every product) was removed.
+
+---
+
+### 4.8 Accounting (ERP admin)
+
+| Method | Endpoint | Notes |
+| :--- | :--- | :--- |
+| `GET` | `/api/bank/accounts` | Regular accounts. Send the owner password in the **`X-Owner-Password` header** to include the owner's safe (the first password ever sent becomes the safe's password). A wrong password is `403 FORBIDDEN` "Wrong owner password." `?password=` still works but puts the password in server logs. |
+| `GET` | `/api/bank/transactions` | Newest first. `category` and `description` may be `null`. |
+| `POST` | `/api/bank/transaction` | `{ "bankAccountId", "categoryId", "transactionType": "Deposit" \| "Withdrawal", "amount", "description" }`. `400 VALIDATION_FAILED` per field (amount > 0, ≤ 2 decimals; description ≤ 255); `422 BUSINESS_RULE_VIOLATION` when a withdrawal is more than the account's balance. |
+| `DELETE` | `/api/bank/resetTransactions` | Deletes every transaction and zeroes balances; `204`. Once the safe has a password, the `X-Owner-Password` header is required (`403` otherwise). |
+
+Bank accounts never include their password hash.
 
 ---
 
