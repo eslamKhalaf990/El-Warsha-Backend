@@ -1,6 +1,9 @@
 package com.warsha.erp.services;
 
+import com.warsha.erp.dtos.ShippingZoneRequest;
 import com.warsha.erp.entities.ShippingZone;
+import com.warsha.erp.exceptions.AppException;
+import com.warsha.erp.exceptions.NotFoundException;
 import com.warsha.erp.exceptions.ConflictException;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.ShippingZoneRepository;
@@ -73,21 +76,52 @@ class ShippingZoneServiceTest {
                 .hasMessageContaining("We don't deliver to 'مطروح' yet");
     }
 
+    private static ShippingZoneRequest request(String name, double fee, Boolean active) {
+        ShippingZoneRequest r = new ShippingZoneRequest();
+        r.setCityName(name);
+        r.setShippingFee(BigDecimal.valueOf(fee));
+        r.setIsActive(active);
+        return r;
+    }
+
     @Test
     void aGovernorateCanOnlyHaveOnePrice() {
         zone(1, "الإسكندرية", 90, true);
-        ShippingZone dup = new ShippingZone();
-        dup.setCityName("الاسكندريه");
-        dup.setShippingFee(BigDecimal.TEN);
-        assertThatThrownBy(() -> service.saveShippingZone(dup)).isInstanceOf(ConflictException.class);
+        assertThatThrownBy(() -> service.create(request("الاسكندريه", 10, null)))
+                .isInstanceOf(ConflictException.class)
+                .satisfies(e -> assertThat(((AppException) e).getDetails().get(0).field()).isEqualTo("cityName"));
+    }
+
+    @Test
+    void newZonesStartActive() {
+        assertThat(service.create(request("  مطروح ", 130, null)).getIsActive()).isTrue();
     }
 
     @Test
     void pricesCannotBeNegative() {
         zone(1, "القاهرة", 80, true);
         when(repository.findById(1)).thenReturn(Optional.of(zones.get(0)));
-        assertThatThrownBy(() -> service.updateShippingPrice(1, BigDecimal.valueOf(-5)))
+        assertThatThrownBy(() -> service.update(1, request("القاهرة", -5, null)))
                 .isInstanceOf(ValidationException.class);
-        assertThat(service.updateShippingPrice(1, BigDecimal.valueOf(85)).getShippingFee()).isEqualByComparingTo("85");
+        assertThat(service.update(1, request("القاهرة", 85, null)).getShippingFee()).isEqualByComparingTo("85");
+    }
+
+    @Test
+    void updateCanRenameAndDeactivateAZone() {
+        ShippingZone cairo = zone(1, "القاهرة", 80, true);
+        when(repository.findById(1)).thenReturn(Optional.of(cairo));
+
+        service.update(1, request("القاهره", 80, false));
+
+        assertThat(cairo.getCityName()).isEqualTo("القاهره");
+        assertThat(cairo.getIsActive()).isFalse();
+        assertThat(service.isValid("القاهرة")).isFalse();
+    }
+
+    @Test
+    void missingZonesAreNotFound() {
+        when(repository.findById(9)).thenReturn(Optional.empty());
+        assertThatThrownBy(() -> service.getShippingZone(9)).isInstanceOf(NotFoundException.class);
+        assertThatThrownBy(() -> service.update(9, request("x", 1, null))).isInstanceOf(NotFoundException.class);
     }
 }

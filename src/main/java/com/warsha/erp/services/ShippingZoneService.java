@@ -1,6 +1,7 @@
 package com.warsha.erp.services;
 
 import com.warsha.erp.dtos.GovernoratePriceDto;
+import com.warsha.erp.dtos.ShippingZoneRequest;
 import com.warsha.erp.entities.ShippingZone;
 import com.warsha.erp.exceptions.ConflictException;
 import com.warsha.erp.exceptions.NotFoundException;
@@ -35,35 +36,45 @@ public class ShippingZoneService {
         return shippingZoneRepository.findAllByOrderByIdAsc();
     }
 
-    public Optional<ShippingZone> getShippingZoneById(Integer id) {
-        return shippingZoneRepository.findById(id);
+    public ShippingZone getShippingZone(Integer id) {
+        return findZone(id);
     }
 
-    public ShippingZone saveShippingZone(ShippingZone zone) {
-        String name = zone.getCityName() == null ? "" : zone.getCityName().trim();
-        if (name.isEmpty()) {
-            throw new ValidationException("cityName", "Enter the governorate name.");
-        }
-        requirePrice(zone.getShippingFee());
-        boolean taken = shippingZoneRepository.findAll().stream()
-                .anyMatch(z -> !Objects.equals(z.getId(), zone.getId()) && key(z.getCityName()).equals(key(name)));
-        if (taken) {
-            throw new ConflictException("'" + name + "' already has a delivery price.");
-        }
-        zone.setCityName(name);
+    public ShippingZone create(ShippingZoneRequest request) {
+        ShippingZone zone = new ShippingZone();
+        apply(zone, request);
         if (zone.getIsActive() == null) zone.setIsActive(true);
         return shippingZoneRepository.save(zone);
     }
 
+    public ShippingZone update(Integer id, ShippingZoneRequest request) {
+        ShippingZone zone = findZone(id);
+        apply(zone, request);
+        return shippingZoneRepository.save(zone);
+    }
+
+    /**
+     * Customers in a deleted zone can no longer check out; deactivating
+     * ({@code isActive = false}) hides it from the store without losing the price.
+     */
     public void deleteShippingZone(Integer id) {
         shippingZoneRepository.delete(findZone(id));
     }
 
-    public ShippingZone updateShippingPrice(Integer id, BigDecimal newPrice) {
-        requirePrice(newPrice);
-        ShippingZone zone = findZone(id);
-        zone.setShippingFee(newPrice);
-        return shippingZoneRepository.save(zone);
+    private void apply(ShippingZone zone, ShippingZoneRequest request) {
+        String name = request.getCityName() == null ? "" : request.getCityName().trim().replaceAll("\\s+", " ");
+        if (name.isEmpty()) {
+            throw new ValidationException("cityName", "Enter the governorate name.");
+        }
+        requirePrice(request.getShippingFee());
+        boolean taken = shippingZoneRepository.findAll().stream()
+                .anyMatch(z -> !Objects.equals(z.getId(), zone.getId()) && key(z.getCityName()).equals(key(name)));
+        if (taken) {
+            throw new ConflictException("cityName", "'" + name + "' already has a delivery price.");
+        }
+        zone.setCityName(name);
+        zone.setShippingFee(request.getShippingFee());
+        if (request.getIsActive() != null) zone.setIsActive(request.getIsActive());
     }
 
     // -------------------------------------------------- store and checkout
@@ -86,6 +97,13 @@ public class ShippingZoneService {
     /** True when the governorate has an active delivery price. */
     public boolean isValid(String governorate) {
         return findActive(governorate).isPresent();
+    }
+
+    /** True when the governorate has a zone, active or not (spelling variants match). */
+    public boolean isKnown(String governorate) {
+        if (governorate == null || governorate.isBlank()) return false;
+        String wanted = key(governorate);
+        return shippingZoneRepository.findAll().stream().anyMatch(z -> key(z.getCityName()).equals(wanted));
     }
 
     public GovernoratePriceDto priceFor(String governorate) {
