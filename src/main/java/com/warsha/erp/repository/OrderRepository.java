@@ -40,4 +40,7 @@ public interface OrderRepository extends JpaRepository<Order, Long> {
             ORDER BY o.id DESC
             """)
     List<Order> findForCustomer(@Param("customerId") Long customerId);
+
+    @Query("SELECT COUNT(o) FROM Order o WHERE o.customer.id = :customerId")
+    long countByCustomerId(@Param("customerId") Long customerId);
 }
