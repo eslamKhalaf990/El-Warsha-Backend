@@ -1,14 +1,16 @@
 package com.warsha.erp.controllers;
 
+import com.warsha.erp.dtos.VendorRequest;
 import com.warsha.erp.entities.Vendor;
 import com.warsha.erp.services.VendorService;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+/** Suppliers (ERP admin only). DELETE archives the vendor. */
 @RestController
 @RequestMapping("/vendors")
 @RequiredArgsConstructor
@@ -16,23 +18,24 @@ public class VendorController {
     private final VendorService service;
 
     @GetMapping
-    public ResponseEntity<List<Vendor>> getAll() {
-        return ResponseEntity.ok(service.getAllVendors());
+    public List<Vendor> getAll(@RequestParam(defaultValue = "false") boolean includeArchived) {
+        return service.getAllVendors(includeArchived);
     }
 
     @PostMapping
-    public ResponseEntity<Vendor> create(@RequestBody Vendor vendor) {
-        return ResponseEntity.status(HttpStatus.CREATED).body(service.saveVendor(vendor));
+    @ResponseStatus(HttpStatus.CREATED)
+    public Vendor create(@Valid @RequestBody VendorRequest request) {
+        return service.create(request);
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Vendor> update(@PathVariable Long id, @RequestBody Vendor vendor) {
-        return ResponseEntity.ok(service.updateVendor(id, vendor));
+    public Vendor update(@PathVariable Long id, @Valid @RequestBody VendorRequest request) {
+        return service.update(id, request);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        service.deleteVendor(id);
-        return ResponseEntity.noContent().build();
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
+        service.archive(id);
     }
 }
