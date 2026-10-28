@@ -44,12 +44,7 @@ public class InvoiceDto {
         // items
         orderDto.setOrderItems(
                 orderEntity.getItems().stream()
-                        .map(item -> new OrderItemDto(
-                                item.getProduct().getProductID(),
-                                item.getProduct().getName(),
-                                item.getQuantity(),
-                                item.getUnitPrice()
-                        ))
+                        .map(OrderItemDto::of)
                         .collect(Collectors.toList())
         );
 

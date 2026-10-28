@@ -33,12 +33,13 @@ public class OrderService {
     private final PaymentService paymentService;
     private final OrderLedgerService ledger;
     private final StockService stockService;
+    private final ShippingZoneService shippingZoneService;
 
     public OrderService(OrderRepository orderRepository,
                         CustomerService customerService,
                         InvoiceService invoiceService, EmailService emailService,
                         PaymentService paymentService, OrderLedgerService ledger,
-                        StockService stockService) {
+                        StockService stockService, ShippingZoneService shippingZoneService) {
         this.orderRepository = orderRepository;
         this.customerService = customerService;
         this.invoiceService = invoiceService;
@@ -46,6 +47,7 @@ public class OrderService {
         this.paymentService = paymentService;
         this.ledger = ledger;
         this.stockService = stockService;
+        this.shippingZoneService = shippingZoneService;
     }
 
     // ------------------------------------------------------------------ reads
@@ -120,7 +122,7 @@ public class OrderService {
 
         Map<Long, Product> products = stockService.lock(productIds(request));
         OrderPricing pricing = fillItems(order, request, products, true,
-                0, EgyptGovernorates.getDeliveryPrice(customer.getGovernorate()), request.getDownPayment());
+                0, shippingZoneService.deliveryPrice(customer.getGovernorate()), request.getDownPayment());
 
         Order saved = orderRepository.save(order);
         invoiceService.generateInvoice(saved.getId());
@@ -284,9 +286,7 @@ public class OrderService {
             dto.setCustomer(cDto);
         }
 
-        dto.setOrderItems(order.getItems().stream().map(i -> new OrderItemDto(
-                i.getProduct().getProductID(), i.getProduct().getName(), i.getQuantity(), i.getUnitPrice()
-        )).toList());
+        dto.setOrderItems(order.getItems().stream().map(OrderItemDto::of).toList());
         return dto;
     }
 
@@ -302,10 +302,13 @@ public class OrderService {
         List<OrderPricing.Line> lines = new ArrayList<>();
         for (OrderItemRequest itemReq : request.getItems()) {
             Product product = products.get(itemReq.getProductId());
-            stockService.take(product, itemReq.getQuantity());
+            ProductVariant variant = stockService.resolveVariant(product, itemReq.getVariantId());
+            stockService.take(product, variant, itemReq.getQuantity());
 
+            Double catalogPrice = variant != null && variant.getSellingPrice() != null
+                    ? variant.getSellingPrice() : product.getSellingPrice();
             double unitPrice = catalogPricesOnly || itemReq.getUnitPrice() == null
-                    ? product.getSellingPrice() : itemReq.getUnitPrice();
+                    ? catalogPrice : itemReq.getUnitPrice();
             if (unitPrice < 0) {
                 throw new ValidationException("items", "The price of '" + product.getName() + "' can't be negative.");
             }
@@ -315,6 +318,7 @@ public class OrderService {
             OrderItems item = new OrderItems();
             item.setOrder(order);
             item.setProduct(product);
+            item.setVariant(variant);
             item.setUnitPrice(unitPrice);
             item.setQuantity(itemReq.getQuantity());
             order.getItems().add(item);

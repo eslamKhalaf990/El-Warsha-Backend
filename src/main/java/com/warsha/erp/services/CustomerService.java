@@ -20,6 +20,7 @@ public class CustomerService {
     @Autowired private CustomerRepository customerRepository;
     @Autowired private EmailService emailService;
     @Autowired private PasswordEncoder passwordEncoder;
+    @Autowired private ShippingZoneService shippingZoneService;
 
     // Formatter for consistent log timestamps
     private final DateTimeFormatter logFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
@@ -36,6 +37,11 @@ public class CustomerService {
     public List<CustomerCountByGovernorate> getCustomerCountsByGovernorate() {
         System.out.println("[" + getTimestamp() + "] INFO: Fetching customer counts by governorate");
         return customerRepository.countCustomersByGovernorate();
+    }
+
+    /** True when a customer already uses this email (case-insensitive trim is left to the DB collation). */
+    public boolean emailExists(String email) {
+        return email != null && customerRepository.findByEmail(email.trim()).isPresent();
     }
 
     public Customer findByEmail(String email) {
@@ -81,7 +87,7 @@ public class CustomerService {
 
         if (customer.getPassword() != null) {
             customer.setPassword(passwordEncoder.encode(customer.getPassword()));
-            if (!EgyptGovernorates.isValid(customer.getGovernorate())) {
+            if (!shippingZoneService.isValid(customer.getGovernorate())) {
                 System.out.println("[" + getTimestamp() + "] WARN: Invalid governorate: " + customer.getGovernorate());
                 throw new IllegalArgumentException("Invalid governorate provided: " + customer.getGovernorate());
             }

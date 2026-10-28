@@ -17,6 +17,9 @@ public class OrderItemRequest {
     @Min(value = 1, message = "Quantity must be at least 1.")
     private Integer quantity;
 
+    /** Required when the product has sizes/colors; leave empty otherwise. */
+    private Long variantId;
+
     /** ERP only: overrides the catalogue price for this line. */
     @PositiveOrZero(message = "Price can't be negative.")
     private Double unitPrice;

@@ -171,7 +171,7 @@ public class InvoiceService {
         for (OrderItems item : items) {
             // Re-order and style cells
             // Item (right-aligned)
-            PdfPCell itemCell = createArabicCell(item.getProduct().getName(), normalFont);
+            PdfPCell itemCell = createArabicCell(item.displayName(), normalFont);
 
             // Description (right-aligned)
             PdfPCell descCell = createArabicCell(item.getProduct().getDescription(), normalFont);

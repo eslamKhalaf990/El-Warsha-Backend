@@ -8,6 +8,7 @@ import com.warsha.erp.exceptions.InsufficientStockException;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.OrderRepository;
 import com.warsha.erp.repository.ProductRepository;
+import com.warsha.erp.repository.ProductVariantRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -24,6 +25,7 @@ class OrderServiceStockTest {
 
     private final OrderRepository orderRepository = mock(OrderRepository.class);
     private final ProductRepository productRepository = mock(ProductRepository.class);
+    private final ProductVariantRepository variantRepository = mock(ProductVariantRepository.class);
     private final CustomerService customerService = mock(CustomerService.class);
     private final PaymentService paymentService = mock(PaymentService.class);
     private OrderService service;
@@ -34,7 +36,7 @@ class OrderServiceStockTest {
     void setUp() {
         service = new OrderService(orderRepository, customerService, mock(InvoiceService.class),
                 mock(EmailService.class), paymentService, mock(OrderLedgerService.class),
-                new StockService(productRepository));
+                new StockService(productRepository, variantRepository), mock(ShippingZoneService.class));
 
         db.put(1L, StockServiceTest.product(1, "5", 0));
         db.put(2L, StockServiceTest.product(2, "1", 0));
@@ -183,5 +185,37 @@ class OrderServiceStockTest {
         existing(OrderStatus.COMPLETED, 1, 2);
         assertThatThrownBy(() -> service.deleteOrder(12L))
                 .hasMessage("Order #12 is completed and can't be deleted.");
+    }
+
+    @Test
+    void variantOrderTakesFromTheVariantAndUsesItsPrice() {
+        Product p = db.get(1L);
+        ProductVariant xl = StockServiceTest.variant(10, p, "XL", "Black", 3);
+        xl.setSellingPrice(150.0);
+        p.setSellingPrice(100.0);
+        when(variantRepository.findActiveByProductId(1L)).thenReturn(List.of(xl));
+        when(variantRepository.findById(10L)).thenReturn(Optional.of(xl));
+
+        OrderRequest r = request(new long[][]{{1, 2}});
+        r.getItems().get(0).setVariantId(10L);
+        r.getItems().get(0).setUnitPrice(null);
+        Order order = service.createOrder(r);
+
+        assertThat(xl.getQuantity()).isEqualTo(1);
+        assertThat(stockOf(1)).isEqualTo("3");
+        assertThat(order.getItems().get(0).getVariant()).isSameAs(xl);
+        assertThat(order.getItems().get(0).getUnitPrice()).isEqualTo(150.0);
+    }
+
+    @Test
+    void cancellingAVariantOrderReturnsTheVariantStock() {
+        Order order = existing(OrderStatus.PENDING, 1, 2);
+        ProductVariant xl = StockServiceTest.variant(10, db.get(1L), "XL", null, 0);
+        order.getItems().get(0).setVariant(xl);
+
+        service.cancelOrder(12L);
+
+        assertThat(xl.getQuantity()).isEqualTo(2);
+        assertThat(stockOf(1)).isEqualTo("7");
     }
 }

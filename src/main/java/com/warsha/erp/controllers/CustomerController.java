@@ -69,6 +69,11 @@ public class CustomerController {
     public ResponseEntity<?> customerSignUp(@RequestBody Customer customer) {
         System.out.println("[" + getTimestamp() + "] INFO: New customer self-signup attempt: " + customer.getEmail());
 
+        // Messages here are plain text read by the storefronts; never include exception details
+        if (customerService.emailExists(customer.getEmail())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: This email is already registered.");
+        }
+
         try {
             Customer savedCustomer = customerService.createCustomer(customer);
             System.out.println("[" + getTimestamp() + "] SUCCESS: Customer sign-up successful for " + savedCustomer.getEmail() + ". Pending verification.");
@@ -78,7 +83,10 @@ public class CustomerController {
             return ResponseEntity.status(HttpStatus.CREATED).body("Registration successful. Please check your email for the verification code.");
         } catch (Exception e) {
             System.out.println("[" + getTimestamp() + "] ERROR: Customer sign-up failed: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: " + e.getMessage());
+            String reason = e instanceof IllegalArgumentException && String.valueOf(e.getMessage()).contains("governorate")
+                    ? "Invalid governorate."
+                    : "Please check your details and try again.";
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: " + reason);
         }
     }
 
@@ -116,7 +124,7 @@ public class CustomerController {
             }
         } catch (Exception e) {
             System.out.println("[" + getTimestamp() + "] ERROR: Resending OTP failed: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Could not send the verification code.");
         }
     }
 }

@@ -19,6 +19,9 @@ This document provides complete instructions and API documentation for the front
    - [Get Products by Category](#33-get-products-by-category)
    - [Get Product by ID](#34-get-product-by-id)
    - [Serving Images](#35-product-images)
+   - [Sizes & Colors (Variants)](#36-sizes--colors-variants)
+   - [Arabic Name & Description](#37-arabic-name--description)
+   - [Image Gallery](#38-image-gallery)
 4. [Shipping & Governorates](#4-shipping--governorates)
    - [Get All Governorates & Prices (`GET /governorates`)](#41-get-all-governorates--prices)
    - [Get Governorates as Key-Value Map (`GET /governorates/map`)](#42-get-governorates-as-key-value-map)
@@ -275,7 +278,7 @@ For logged-in customers wishing to update their password.
 
 ### 3.2 Get All Products
 
-Fetches all non-deleted products with their stock, pricing, and category metadata.
+Fetches all non-deleted products with their stock, pricing, category metadata, Arabic text and sizes/colors.
 
 - **Endpoint**: `GET /products`
 - **Auth Required**: No
@@ -285,22 +288,68 @@ Fetches all non-deleted products with their stock, pricing, and category metadat
 [
   {
     "id": 15,
-    "name": "Oak Dining Table",
-    "description": "Solid oak wood table with metal legs",
-    "buyingPrice": 3500.0,
-    "sellingPrice": 5000.0,
-    "discount": 500.0,
-    "totalPrice": 4500.0,
+    "name": "Linen Shirt",
+    "nameAr": "قميص كتان",
+    "description": "Relaxed fit linen shirt",
+    "descriptionAr": "قميص كتان قصة واسعة",
+    "buyingPrice": 250.0,
+    "sellingPrice": 450.0,
+    "discount": 50.0,
+    "totalPrice": 400.0,
     "imageUrl": "/images/a1b2c3d4-e5f6-7890-abcd-1234567890ab.jpg",
-    "sku": "TBL-OAK-001",
+    "sku": "SHR-LIN-001",
     "quantity": "12",
     "categoryId": 1,
-    "categoryName": "Wooden Tables",
+    "categoryName": "Shirts",
     "deleted": null,
-    "deletedAt": null
+    "deletedAt": null,
+    "hasVariants": true,
+    "variants": [
+      {
+        "id": 31,
+        "productId": 15,
+        "size": "M",
+        "color": "Black",
+        "colorAr": "أسود",
+        "colorHex": "#1A1A1A",
+        "sku": "SHR-LIN-001-M-BLK",
+        "sellingPrice": null,
+        "price": 450.0,
+        "totalPrice": 400.0,
+        "quantity": 5,
+        "inStock": true,
+        "imageUrl": null
+      },
+      {
+        "id": 32,
+        "productId": 15,
+        "size": "XL",
+        "color": "Black",
+        "colorAr": "أسود",
+        "colorHex": "#1A1A1A",
+        "sku": null,
+        "sellingPrice": 500.0,
+        "price": 500.0,
+        "totalPrice": 450.0,
+        "quantity": 7,
+        "inStock": true,
+        "imageUrl": null
+      }
+    ],
+    "images": [
+      { "id": 4, "imageUrl": "/images/5b2c1e9a-back.webp", "sortOrder": 0 },
+      { "id": 7, "imageUrl": "/images/91d0a3f4-detail.webp", "sortOrder": 1 }
+    ]
   }
 ]
 ```
+
+> **New fields (backwards compatible — old clients can ignore them):**
+> - `nameAr`, `descriptionAr` — Arabic text, `null` until the admin fills it in. Fall back to `name` / `description`.
+> - `hasVariants` — `true` when the product is sold in sizes/colors.
+> - `variants` — active sizes/colors (always an array, `[]` for simple products). See [3.6](#36-sizes--colors-variants).
+> - `images` — extra gallery images, already in display order (always an array). See [3.8](#38-image-gallery).
+> - `discount` and `totalPrice` are now also filled on `GET /products/getByCategoryId`.
 
 ---
 
@@ -325,7 +374,9 @@ Returns an array of `ProductDTO` matching the specified `categoryId`.
 - **Auth Required**: No
 
 #### Response `200 OK`
-Returns the product entity.
+Returns one `ProductDTO` — the same shape as an item of `GET /products`, including `nameAr`, `descriptionAr`, `hasVariants` and `variants`.
+
+> ⚠️ **Changed:** this endpoint used to return the raw product entity (keys like `productID`, nested `category`). It now returns the DTO (`id`, `categoryId`, `categoryName`, …). Clients reading `productID` must switch to `id`.
 
 ---
 
@@ -372,9 +423,114 @@ Returns `201` with `{ "filename": "...", "url": "/images/..." }`. Then assign it
 
 ---
 
+### 3.6 Sizes & Colors (Variants)
+
+A product can be sold in several sizes and/or colors. Each combination is a **variant** with its own stock and, optionally, its own price.
+
+**Rules**
+- A variant has a `size`, a `color`, or both.
+- `sellingPrice` on a variant is optional. When it is `null` the variant sells at the product's `sellingPrice`. `price` is always the effective price before discount; `totalPrice` is after the product's `discount`.
+- When a product has variants, its `quantity` is **the total of its variants** and is maintained by the server. Edits to the product's own `quantity` are ignored while it has variants.
+- Deleting a variant is a soft delete; old orders keep showing it.
+- Products without variants work exactly as before.
+
+| Method | Endpoint | Auth | Body | Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/products/{id}/variants` | Public | — | `200` array of variants |
+| `POST` | `/products/{id}/variants` | Admin | `ProductVariantRequest` | `201` the new variant |
+| `PUT` | `/products/{id}/variants/{variantId}` | Admin | `ProductVariantRequest` | `200` the updated variant |
+| `DELETE` | `/products/{id}/variants/{variantId}` | Admin | — | `204` |
+
+#### `ProductVariantRequest`
+```json
+{
+  "size": "XL",
+  "color": "Black",
+  "colorAr": "أسود",
+  "colorHex": "#1A1A1A",
+  "sku": "SHR-LIN-001-XL-BLK",
+  "sellingPrice": 500.0,
+  "quantity": 7
+}
+```
+
+| Field | Required | Notes |
+| :--- | :--- | :--- |
+| `size` | one of size/color | max 50 chars, e.g. `M`, `42`, `30x40` |
+| `color` | one of size/color | max 50 chars, English name |
+| `colorAr` | no | Arabic color name |
+| `colorHex` | no | `#RRGGBB` or `#RRGGBBAA`, for swatches |
+| `sku` | no | max 100 chars |
+| `sellingPrice` | no | `null` = use the product's price; must be ≥ 0 |
+| `quantity` | **yes** | stock, ≥ 0 |
+
+#### Errors (standard `ApiError` body)
+| Status | `code` | When |
+| :--- | :--- | :--- |
+| `400` | `VALIDATION_FAILED` | No size and no color, negative stock/price, bad color code |
+| `404` | `NOT_FOUND` | Product or variant doesn't exist (or variant belongs to another product) |
+| `409` | `CONFLICT` | The product already has a variant with the same size + color |
+
+---
+
+### 3.7 Arabic Name & Description
+
+`nameAr` and `descriptionAr` are sent inside the existing `product` JSON part of the admin create/update calls:
+
+```http
+POST /products            (multipart: product=<json>, image=<file>)
+PUT  /products/{id}       (multipart: product=<json>, image=<file, optional>)
+```
+```json
+{
+  "name": "Linen Shirt",
+  "nameAr": "قميص كتان",
+  "description": "Relaxed fit linen shirt",
+  "descriptionAr": "قميص كتان قصة واسعة",
+  "buyingPrice": 250,
+  "sellingPrice": 450,
+  "discount": 50,
+  "category": { "categoryId": 1 },
+  "quantity": "12"
+}
+```
+
+**Display rule for clients:** show `nameAr` / `descriptionAr` when the UI is in Arabic and the value is not empty; otherwise show `name` / `description`.
+
+---
+
+### 3.8 Image Gallery
+
+A product can have up to **10 extra images** besides its cover. The cover stays in `imageUrl`; the extras come in `images`, already sorted.
+
+**What to show:** swipe through `[imageUrl, ...images.map(i => i.imageUrl)]`, cover first. Image URLs are relative (`/images/<file>`), exactly like `imageUrl`.
+
+Files live in the shared image library (`GET /products/images`), so removing an image from a gallery never deletes the file.
+
+| Method | Endpoint | Auth | Body | Response |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/products/{id}/images` | Public | — | `200` array of `{id, imageUrl, sortOrder}` |
+| `POST` | `/products/{id}/images/upload` | Admin | multipart, file part `image` | `201` the new image |
+| `POST` | `/products/{id}/images` | Admin | `{ "filename": "abc.webp" }` (an image already in the library) | `201` the new image |
+| `PUT` | `/products/{id}/images/order` | Admin | `{ "imageIds": [7, 4] }` — every image id, new order | `200` the gallery in its new order |
+| `DELETE` | `/products/{id}/images/{imageId}` | Admin | — | `204` |
+
+#### Errors (standard `ApiError` body)
+| Status | `code` | When |
+| :--- | :--- | :--- |
+| `400` | `VALIDATION_FAILED` | No file / bad filename, or `imageIds` doesn't list every image exactly once |
+| `404` | `NOT_FOUND` | Product, library file or gallery image doesn't exist (or belongs to another product) |
+| `422` | `BUSINESS_RULE_VIOLATION` | Gallery already has 10 images, or the image is already the cover / in the gallery |
+
+---
+
 ## 4. Shipping & Governorates
 
 When placing an order, the system calculates the delivery charge automatically based on the customer's registered `governorate`. The frontend can dynamically fetch governorates and their shipping fees using the public endpoints below (also aliased under `/shipping/governorates/**`).
+
+> **Source of truth:** prices come from the **Shipping Zones** the admin edits in the ERP (`ShippingZones` table). Nothing is hardcoded: a price changed in the ERP is used by the next request — the store's price list, store checkout charges and sign-up validation all read it. Inactive zones are hidden and can't be ordered to.
+>
+> **Clients must not cache prices for long.** Reload `GET /governorates` when the cart or checkout opens; the store app does this.
 
 ### 4.1 Get All Governorates & Prices
 
@@ -442,26 +598,33 @@ GET /governorates/price?governorate=القاهره
 }
 ```
 
-#### Response `400 Bad Request` (Invalid governorate)
+#### Response `400 Bad Request` (no active zone for this governorate)
+Standard `ApiError` body:
 ```json
 {
-  "error": "المحافظة غير موجودة في قائمة الأسعار: UnknownCity"
+  "status": 400,
+  "code": "VALIDATION_FAILED",
+  "message": "We don't deliver to 'UnknownCity' yet. Choose another governorate.",
+  "details": [{ "field": "governorate", "message": "We don't deliver to 'UnknownCity' yet. Choose another governorate." }]
 }
 ```
 
+> ⚠️ **Changed:** this used to be `{ "error": "..." }`.
+
 ---
 
-### Supported Governorates List
+### 4.4 Managing Shipping Zones (ERP admin)
 
-| Governorate (Arabic) | Zone / Delivery Fee (EGP) |
-| :--- | :--- |
-| **القاهرة** | 80.0 EGP |
-| **الجيزة** | 80.0 EGP |
-| **الإسكندرية** | 90.0 EGP |
-| **القليوبية**, **المنوفية**, **الشرقية**, **الغربية**, **البحيرة**, **الدقهلية**, **كفر الشيخ**, **الإسماعيلية**, **السويس**, **بورسعيد**, **دمياط**, **دمياط الجديدة** | 100.0 EGP |
-| **الفيوم**, **بني سويف**, **المنيا** | 110.0 EGP |
-| **أسيوط**, **سوهاج**, **البحر الأحمر**, **قنا**, **الأقصر**, **أسوان** | 120.0 EGP |
-| **شمال سيناء**, **جنوب سيناء**, **مطروح**, **الوادي الجديد** | 130.0 EGP |
+| Method | Endpoint | Auth | Body / Params | Notes |
+| :--- | :--- | :--- | :--- | :--- |
+| `GET` | `/shipping` | Admin | — | All zones, active and inactive: `{id, cityName, shippingFee, isActive, …}` |
+| `POST` | `/shipping` | Admin | `{ "cityName": "مطروح", "shippingFee": 130 }` | `409 CONFLICT` if the governorate already has a zone (spelling variants count as the same) |
+| `PUT` | `/shipping/{id}?shippingFee=95` | Admin | — | Changes the price; applies to the store immediately |
+| `DELETE` | `/shipping/{id}` | Admin | — | Customers in that governorate can no longer check out |
+
+Prices must be `0` or more (`400 VALIDATION_FAILED` otherwise).
+
+The initial zones are created by `schema-sync-shipping-zones.sql`, which only fills in governorates that don't have a zone yet; prices edited in the ERP are never overwritten.
 
 ---
 
@@ -484,6 +647,7 @@ GET /governorates/price?governorate=القاهره
   "items": [
     {
       "productId": 15,
+      "variantId": 32,
       "quantity": 1
     },
     {
@@ -493,6 +657,15 @@ GET /governorates/price?governorate=القاهره
   ]
 }
 ```
+
+> **`variantId`** (new): required when the product has variants (`hasVariants: true`), and must be omitted/`null` for products without variants. The line is charged at the variant's price, and stock is taken from that variant.
+>
+> | Status | `code` | Message (example) |
+> | :--- | :--- | :--- |
+> | `400` | `VALIDATION_FAILED` | `Choose a size/color for 'Linen Shirt'.` |
+> | `400` | `VALIDATION_FAILED` | `The chosen size/color doesn't belong to 'Linen Shirt'.` |
+> | `409` | `INSUFFICIENT_STOCK` | `Not enough stock for 'Linen Shirt (XL / Black)' (available: 1, requested: 2).` |
+> | `422` | `BUSINESS_RULE_VIOLATION` | `'Linen Shirt (XL / Black)' is no longer available.` |
 
 #### Response `200 OK` (`OrderResponse`):
 ```json
@@ -519,13 +692,19 @@ GET /governorates/price?governorate=القاهره
   "orderItems": [
     {
       "productId": 15,
-      "productName": "Oak Dining Table",
+      "productName": "Linen Shirt",
+      "productNameAr": "قميص كتان",
+      "variantId": 32,
+      "size": "XL",
+      "color": "Black",
       "quantity": 1,
-      "unitPrice": 5000.0
+      "unitPrice": 500.0
     }
   ]
 }
 ```
+
+> `productNameAr`, `variantId`, `size` and `color` are new on every order line (orders, order lists, invoices). They are `null` for products without variants.
 
 ---
 

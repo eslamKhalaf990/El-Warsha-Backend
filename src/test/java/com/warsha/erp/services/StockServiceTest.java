@@ -1,14 +1,17 @@
 package com.warsha.erp.services;
 
 import com.warsha.erp.entities.Product;
+import com.warsha.erp.entities.ProductVariant;
 import com.warsha.erp.exceptions.BusinessRuleException;
 import com.warsha.erp.exceptions.InsufficientStockException;
 import com.warsha.erp.exceptions.NotFoundException;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.ProductRepository;
+import com.warsha.erp.repository.ProductVariantRepository;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -17,7 +20,8 @@ import static org.mockito.Mockito.*;
 class StockServiceTest {
 
     private final ProductRepository repository = mock(ProductRepository.class);
-    private final StockService stock = new StockService(repository);
+    private final ProductVariantRepository variants = mock(ProductVariantRepository.class);
+    private final StockService stock = new StockService(repository, variants);
 
     static Product product(long id, String quantity, Integer sold) {
         Product p = new Product();
@@ -26,6 +30,17 @@ class StockServiceTest {
         p.setQuantity(quantity);
         p.setSold(sold);
         return p;
+    }
+
+    static ProductVariant variant(long id, Product product, String size, String color, int quantity) {
+        ProductVariant v = new ProductVariant();
+        v.setId(id);
+        v.setProduct(product);
+        v.setSize(size);
+        v.setColor(color);
+        v.setQuantity(quantity);
+        v.setSold(0);
+        return v;
     }
 
     @Test
@@ -104,5 +119,74 @@ class StockServiceTest {
         assertThatThrownBy(() -> stock.lock(List.of(1L, 2L)))
                 .isInstanceOf(NotFoundException.class)
                 .hasMessage("Product #2 was not found.");
+    }
+
+    @Test
+    void takingAVariantReducesItAndTheProductTotal() {
+        Product p = product(1, "5", 0);
+        ProductVariant m = variant(10, p, "M", "Black", 3);
+
+        stock.take(p, m, 2);
+
+        assertThat(m.getQuantity()).isEqualTo(1);
+        assertThat(m.getSold()).isEqualTo(2);
+        assertThat(p.getQuantity()).isEqualTo("3");
+        assertThat(p.getSold()).isEqualTo(2);
+    }
+
+    @Test
+    void variantStockIsCheckedOnItsOwn() {
+        Product p = product(1, "9", 0);
+        ProductVariant m = variant(10, p, "M", "Black", 1);
+        assertThatThrownBy(() -> stock.take(p, m, 2))
+                .isInstanceOf(InsufficientStockException.class)
+                .hasMessage("Not enough stock for 'Bracelet 1 (M / Black)' (available: 1, requested: 2).");
+    }
+
+    @Test
+    void deletedVariantsCannotBeOrdered() {
+        Product p = product(1, "9", 0);
+        ProductVariant m = variant(10, p, "M", null, 5);
+        m.setDeleted(true);
+        assertThatThrownBy(() -> stock.take(p, m, 1))
+                .isInstanceOf(BusinessRuleException.class)
+                .hasMessage("'Bracelet 1 (M)' is no longer available.");
+    }
+
+    @Test
+    void putBackRestoresTheVariantToo() {
+        Product p = product(1, "1", 2);
+        ProductVariant m = variant(10, p, "M", null, 0);
+        m.setSold(2);
+
+        stock.putBack(p, m, 2);
+
+        assertThat(m.getQuantity()).isEqualTo(2);
+        assertThat(m.getSold()).isZero();
+        assertThat(p.getQuantity()).isEqualTo("3");
+    }
+
+    @Test
+    void productsWithVariantsNeedOneChosen() {
+        Product p = product(1, "5", 0);
+        when(variants.findActiveByProductId(1L)).thenReturn(List.of(variant(10, p, "M", null, 5)));
+        assertThatThrownBy(() -> stock.resolveVariant(p, null))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("Choose a size/color for 'Bracelet 1'.");
+    }
+
+    @Test
+    void productsWithoutVariantsResolveToNull() {
+        when(variants.findActiveByProductId(1L)).thenReturn(List.of());
+        assertThat(stock.resolveVariant(product(1, "5", 0), null)).isNull();
+    }
+
+    @Test
+    void aVariantOfAnotherProductIsRejected() {
+        Product p = product(1, "5", 0);
+        when(variants.findById(20L)).thenReturn(Optional.of(variant(20, product(2, "5", 0), "L", null, 5)));
+        assertThatThrownBy(() -> stock.resolveVariant(p, 20L))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("The chosen size/color doesn't belong to 'Bracelet 1'.");
     }
 }

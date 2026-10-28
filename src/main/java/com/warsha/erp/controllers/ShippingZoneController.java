@@ -2,7 +2,6 @@ package com.warsha.erp.controllers;
 
 import com.warsha.erp.dtos.GovernoratePriceDto;
 import com.warsha.erp.entities.ShippingZone;
-import com.warsha.erp.services.EgyptGovernorates;
 import com.warsha.erp.services.ShippingZoneService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
@@ -27,21 +26,17 @@ public class ShippingZoneController {
 
     @GetMapping("/governorates")
     public ResponseEntity<List<GovernoratePriceDto>> getAllGovernoratePrices() {
-        return ResponseEntity.ok(EgyptGovernorates.getAllGovernoratePrices());
+        return ResponseEntity.ok(shippingZoneService.activePrices());
     }
 
     @GetMapping("/governorates/map")
     public ResponseEntity<Map<String, Double>> getAllGovernoratePricesMap() {
-        return ResponseEntity.ok(EgyptGovernorates.getAllRatesMap());
+        return ResponseEntity.ok(shippingZoneService.activePriceMap());
     }
 
     @GetMapping("/governorates/price")
     public ResponseEntity<?> getGovernoratePrice(@RequestParam String governorate) {
-        try {
-            return ResponseEntity.ok(EgyptGovernorates.getGovernoratePrice(governorate));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+        return ResponseEntity.ok(shippingZoneService.priceFor(governorate));
     }
 
     @GetMapping("/{id}")

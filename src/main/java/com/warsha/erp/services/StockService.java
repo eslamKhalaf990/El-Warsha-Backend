@@ -2,11 +2,13 @@ package com.warsha.erp.services;
 
 import com.warsha.erp.entities.OrderItems;
 import com.warsha.erp.entities.Product;
+import com.warsha.erp.entities.ProductVariant;
 import com.warsha.erp.exceptions.BusinessRuleException;
 import com.warsha.erp.exceptions.InsufficientStockException;
 import com.warsha.erp.exceptions.NotFoundException;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.ProductRepository;
+import com.warsha.erp.repository.ProductVariantRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,14 +27,20 @@ import java.util.TreeSet;
  * {@link #take} / {@link #putBack}. Changes are applied to the locked, managed
  * entities and flushed when the surrounding order transaction commits, so two
  * concurrent orders can never oversell the same product.
+ *
+ * Products with sizes/colors keep stock per {@link ProductVariant}. The product's own
+ * quantity stays the total of its variants, so lists and reports keep working. Variant
+ * rows are only changed while their product row is locked.
  */
 @Service
 public class StockService {
 
     private final ProductRepository productRepository;
+    private final ProductVariantRepository variantRepository;
 
-    public StockService(ProductRepository productRepository) {
+    public StockService(ProductRepository productRepository, ProductVariantRepository variantRepository) {
         this.productRepository = productRepository;
+        this.variantRepository = variantRepository;
     }
 
     /**
@@ -71,6 +79,39 @@ public class StockService {
         product.setUpdatedAt(LocalDateTime.now());
     }
 
+    /**
+     * Removes {@code quantity} from one size/color and from the product total.
+     * The product must already be locked.
+     */
+    public void take(Product product, ProductVariant variant, int quantity) {
+        if (variant == null) {
+            take(product, quantity);
+            return;
+        }
+        requirePositive(product, quantity);
+        if (isDeleted(product)) {
+            throw new BusinessRuleException("'" + product.getName() + "' is no longer available.");
+        }
+        String name = product.getName() + " (" + variant.label() + ")";
+        if (variant.isDeleted()) {
+            throw new BusinessRuleException("'" + name + "' is no longer available.");
+        }
+        int available = available(variant);
+        if (available < quantity) {
+            throw new InsufficientStockException(available == 0
+                    ? "'" + name + "' is out of stock."
+                    : "Not enough stock for '" + name + "' (available: " + available
+                      + ", requested: " + quantity + ").");
+        }
+        LocalDateTime now = LocalDateTime.now();
+        variant.setQuantity(available - quantity);
+        variant.setSold(soldOf(variant) + quantity);
+        variant.setUpdatedAt(now);
+        product.setQuantity(String.valueOf(Math.max(0, available(product) - quantity)));
+        product.setSold(sold(product) + quantity);
+        product.setUpdatedAt(now);
+    }
+
     /** Returns {@code quantity} to stock and removes it from the sold count. */
     public void putBack(Product product, int quantity) {
         requirePositive(product, quantity);
@@ -79,11 +120,39 @@ public class StockService {
         product.setUpdatedAt(LocalDateTime.now());
     }
 
+    /** Returns {@code quantity} to one size/color and to the product total. */
+    public void putBack(Product product, ProductVariant variant, int quantity) {
+        putBack(product, quantity);
+        if (variant != null) {
+            variant.setQuantity(available(variant) + quantity);
+            variant.setSold(Math.max(0, soldOf(variant) - quantity));
+            variant.setUpdatedAt(LocalDateTime.now());
+        }
+    }
+
     /** Puts back every line of an order. The products must already be locked. */
     public void putBackAll(Collection<OrderItems> items) {
         for (OrderItems item : items) {
-            putBack(item.getProduct(), item.getQuantity());
+            putBack(item.getProduct(), item.getVariant(), item.getQuantity());
         }
+    }
+
+    /**
+     * Finds the size/color an order line asks for. Products with variants need one;
+     * products without variants must not get one.
+     *
+     * @return the variant, or null for a product without variants
+     */
+    public ProductVariant resolveVariant(Product product, Long variantId) {
+        List<ProductVariant> variants = variantRepository.findActiveByProductId(product.getProductID());
+        if (variantId == null) {
+            if (variants.isEmpty()) return null;
+            throw new ValidationException("items", "Choose a size/color for '" + product.getName() + "'.");
+        }
+        return variantRepository.findById(variantId)
+                .filter(v -> v.getProduct().getProductID().equals(product.getProductID()))
+                .orElseThrow(() -> new ValidationException("items",
+                        "The chosen size/color doesn't belong to '" + product.getName() + "'."));
     }
 
     /**
@@ -99,6 +168,14 @@ public class StockService {
             throw new BusinessRuleException("The stock quantity of '" + product.getName() + "' is '" + raw
                     + "', which is not a number. Fix it on the product page and try again.");
         }
+    }
+
+    public static int available(ProductVariant variant) {
+        return variant.getQuantity() != null ? variant.getQuantity() : 0;
+    }
+
+    private static int soldOf(ProductVariant variant) {
+        return variant.getSold() != null ? variant.getSold() : 0;
     }
 
     private static int sold(Product product) {

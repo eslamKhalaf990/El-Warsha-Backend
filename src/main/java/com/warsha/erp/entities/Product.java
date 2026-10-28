@@ -19,8 +19,14 @@ public class Product {
     @Column(name = "Name")
     private String Name;
 
+    @Column(name = "NameAr")
+    private String NameAr;
+
     @Column(name = "Description")
     private String Description;
+
+    @Column(name = "DescriptionAr")
+    private String DescriptionAr;
 
     @Column(name = "BuyingPrice")
     private Double BuyingPrice;
