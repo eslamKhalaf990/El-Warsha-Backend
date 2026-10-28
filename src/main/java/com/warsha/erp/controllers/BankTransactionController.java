@@ -2,10 +2,11 @@ package com.warsha.erp.controllers;
 
 import com.warsha.erp.dtos.BankAccountDTO;
 import com.warsha.erp.dtos.BankSummaryDTO;
-import com.warsha.erp.dtos.BankTransactionDTO;
+import com.warsha.erp.dtos.ManualTransactionRequest;
 import com.warsha.erp.dtos.TransactionCategoryDTO;
 import com.warsha.erp.entities.BankTransaction;
 import com.warsha.erp.services.BankTransactionService;
+import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -16,13 +17,15 @@ import java.util.List;
 @RequestMapping("/api/bank")
 public class BankTransactionController {
 
+    static final String OWNER_PASSWORD_HEADER = "X-Owner-Password";
+
     @Autowired
     private BankTransactionService transactionService;
 
+    /** A deposit or withdrawal entered by staff. */
     @PostMapping("/transaction")
-    public ResponseEntity<BankTransaction> addTransaction(@RequestBody BankTransactionDTO dto) {
-        BankTransaction transaction = transactionService.createTransaction(dto);
-        return ResponseEntity.ok(transaction);
+    public ResponseEntity<BankTransaction> addTransaction(@Valid @RequestBody ManualTransactionRequest request) {
+        return ResponseEntity.ok(transactionService.createManual(request));
     }
 
     @GetMapping("/transactions/{accountId}")
@@ -46,15 +49,15 @@ public class BankTransactionController {
         return ResponseEntity.ok(summary);
     }
 
+    /**
+     * Regular accounts; with the owner password (header {@code X-Owner-Password},
+     * or the older {@code ?password=}) the owner's safe too. A wrong password is 403.
+     */
     @GetMapping("/accounts")
     public ResponseEntity<List<BankAccountDTO>> getAllAccounts(
-            @RequestParam(name = "password", required = false) String password) {
-
-        // If password is null, service returns regular accounts
-        // If password is correct, service returns all accounts
-        List<BankAccountDTO> accounts = transactionService.getAllAccounts(password);
-
-        return ResponseEntity.ok(accounts);
+            @RequestHeader(name = OWNER_PASSWORD_HEADER, required = false) String headerPassword,
+            @RequestParam(name = "password", required = false) String queryPassword) {
+        return ResponseEntity.ok(transactionService.getAllAccounts(headerPassword != null ? headerPassword : queryPassword));
     }
 
     @GetMapping("/transactionCategories")
@@ -63,9 +66,11 @@ public class BankTransactionController {
         return ResponseEntity.ok(accounts);
     }
 
+    /** Deletes every transaction and zeroes balances; needs the owner password once one is set. */
     @DeleteMapping("/resetTransactions")
-    public ResponseEntity<String> resetSystem() {
-        transactionService.hardResetSystem();
-        return ResponseEntity.ok("System reset successful: All transactions deleted and balances updated to 0.");
+    public ResponseEntity<Void> resetSystem(
+            @RequestHeader(name = OWNER_PASSWORD_HEADER, required = false) String ownerPassword) {
+        transactionService.resetAll(ownerPassword);
+        return ResponseEntity.noContent().build();
     }
 }

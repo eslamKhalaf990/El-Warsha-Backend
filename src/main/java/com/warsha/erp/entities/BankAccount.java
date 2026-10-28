@@ -1,5 +1,6 @@
 package com.warsha.erp.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -32,6 +33,8 @@ public class BankAccount {
     @Column(name = "IsOwnerSafe")
     private boolean isOwnerSafe = false;
 
+    // Never sent to clients
+    @JsonIgnore
     @Column(name = "HashedPassword")
     private String hashedPassword;
 }
