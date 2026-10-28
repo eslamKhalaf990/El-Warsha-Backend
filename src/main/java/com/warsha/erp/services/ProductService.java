@@ -1,5 +1,15 @@
 package com.warsha.erp.services;
 
+import com.warsha.erp.dtos.ProductRequest;
+import com.warsha.erp.entities.Category;
+import com.warsha.erp.exceptions.ApiError;
+import com.warsha.erp.exceptions.AppException;
+import com.warsha.erp.exceptions.ErrorCode;
+import com.warsha.erp.exceptions.ValidationException;
+import com.warsha.erp.repository.CategoryRepository;
+import jakarta.validation.Validator;
+import org.springframework.transaction.annotation.Transactional;
+import java.util.Comparator;
 import com.warsha.erp.dtos.ProductDTO;
 import com.warsha.erp.dtos.ProductImageDto;
 import com.warsha.erp.dtos.ProductVariantDto;
@@ -37,6 +47,8 @@ public class ProductService {
     private final ProductRepository productRepository;
     private final ProductVariantRepository variantRepository;
     private final ProductImageRepository imageRepository;
+    private final CategoryRepository categoryRepository;
+    private final Validator validator;
 
     // This pulls the path from your application.properties,
     // defaulting to your Ubuntu path if not specified
@@ -45,10 +57,13 @@ public class ProductService {
 
     @Autowired
     public ProductService(ProductRepository productRepository, ProductVariantRepository variantRepository,
-                          ProductImageRepository imageRepository) {
+                          ProductImageRepository imageRepository, CategoryRepository categoryRepository,
+                          Validator validator) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
         this.imageRepository = imageRepository;
+        this.categoryRepository = categoryRepository;
+        this.validator = validator;
     }
 
     public List<ProductDTO> getAllProducts() {
@@ -82,84 +97,89 @@ public class ProductService {
         }
     }
 
-    public Product createProduct(Product product, MultipartFile image) {
+    /** Creates a product from the ERP form. A cover image is required. */
+    @Transactional
+    public ProductDTO create(ProductRequest request, MultipartFile image) {
+        validate(request);
+        if (image == null || image.isEmpty()) {
+            throw new ValidationException("image", "Choose a product image.");
+        }
+        Product product = new Product();
+        apply(product, request, true);
+        product.setSold(0);
         product.setCreatedAt(LocalDateTime.now());
-
-        if (image != null && !image.isEmpty()) {
-            try {
-                String imageUrl = saveImageToDisk(image);
-                product.setImageUrl(imageUrl);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to save image to disk", e);
-            }
-        }
-
-        return productRepository.save(product);
+        product.setImageUrl(storeImage(image));
+        return getProductDtoById(productRepository.save(product).getProductID());
     }
 
-    public void updateProduct(Long id, Product updatedProduct) {
-        Product existing = getProductById(id);
-        existing.setName(updatedProduct.getName());
-        existing.setNameAr(updatedProduct.getNameAr());
-        existing.setDescription(updatedProduct.getDescription());
-        existing.setDescriptionAr(updatedProduct.getDescriptionAr());
-        existing.setBuyingPrice(updatedProduct.getBuyingPrice());
-        existing.setSellingPrice(updatedProduct.getSellingPrice());
-        existing.setDiscount(updatedProduct.getDiscount());
+    /** Updates a product; the image is replaced only when a new one is sent. */
+    @Transactional
+    public ProductDTO update(Long id, ProductRequest request, MultipartFile image) {
+        validate(request);
+        Product product = getProductById(id);
         // With sizes/colors the stock lives on the variants and the total is kept by the server
-        if (variantRepository.findActiveByProductId(id).isEmpty()) {
-            existing.setQuantity(updatedProduct.getQuantity());
-        }
-        existing.setCategory(updatedProduct.getCategory());
-        existing.setUpdatedAt(LocalDateTime.now());
-        productRepository.save(existing);
-    }
-
-    public Product updateProductWithImage(Long id, Product updatedProduct, MultipartFile image) {
-        Product existing = getProductById(id);
-
-        existing.setName(updatedProduct.getName());
-        existing.setNameAr(updatedProduct.getNameAr());
-        existing.setDescription(updatedProduct.getDescription());
-        existing.setDescriptionAr(updatedProduct.getDescriptionAr());
-        existing.setBuyingPrice(updatedProduct.getBuyingPrice());
-        existing.setSellingPrice(updatedProduct.getSellingPrice());
-        existing.setDiscount(updatedProduct.getDiscount());
-        // With sizes/colors the stock lives on the variants and the total is kept by the server
-        if (variantRepository.findActiveByProductId(id).isEmpty()) {
-            existing.setQuantity(updatedProduct.getQuantity());
-        }
-        existing.setCategory(updatedProduct.getCategory());
-        existing.setUpdatedAt(LocalDateTime.now());
-
+        apply(product, request, variantRepository.findActiveByProductId(id).isEmpty());
+        product.setUpdatedAt(LocalDateTime.now());
         if (image != null && !image.isEmpty()) {
-            try {
-                // Old image stays in the library: other products may still use it
-                // Save the new image
-                String imageUrl = saveImageToDisk(image);
-                existing.setImageUrl(imageUrl);
-            } catch (IOException e) {
-                throw new RuntimeException("Failed to save image to disk", e);
-            }
+            // Old image stays in the library: other products may still use it
+            product.setImageUrl(storeImage(image));
         }
-
-        return productRepository.save(existing);
+        productRepository.save(product);
+        return getProductDtoById(id);
     }
 
+    /** Soft delete: the product disappears from the store and the ERP, order history keeps it. */
+    @Transactional
     public void deleteProduct(Long id) {
-        Product product = productRepository.findById(id)
-                .orElseThrow(() -> new EntityNotFoundException("Product not found with id " + id));
-
-        // Image file is kept: it belongs to the shared image library
-        // Soft delete: mark as deleted
+        Product product = getProductById(id);
         product.setDeleted("true");
         product.setUpdatedAt(LocalDateTime.now());
         product.setDeletedAt(LocalDateTime.now());
         productRepository.save(product);
     }
 
-    public void deleteAll() {
-        productRepository.deleteAll();
+    private void validate(ProductRequest request) {
+        List<ApiError.FieldViolation> details = validator.validate(request).stream()
+                .map(v -> new ApiError.FieldViolation(v.getPropertyPath().toString(), v.getMessage()))
+                .sorted(Comparator.comparing(ApiError.FieldViolation::field))
+                .toList();
+        if (!details.isEmpty()) {
+            throw new AppException(ErrorCode.VALIDATION_FAILED,
+                    details.size() == 1 ? details.get(0).message() : ErrorCode.VALIDATION_FAILED.defaultMessage(),
+                    details);
+        }
+        double discount = request.getDiscount() == null ? 0 : request.getDiscount();
+        if (discount > request.getSellingPrice()) {
+            throw new ValidationException("discount", "Discount can't be more than the selling price.");
+        }
+    }
+
+    private void apply(Product product, ProductRequest request, boolean setStock) {
+        Category category = categoryRepository.findById(request.getCategoryId())
+                .orElseThrow(() -> new ValidationException("categoryId", "Choose a category from the list."));
+        product.setName(request.getName().trim());
+        product.setNameAr(blankToNull(request.getNameAr()));
+        product.setDescription(blankToNull(request.getDescription()));
+        product.setDescriptionAr(blankToNull(request.getDescriptionAr()));
+        product.setBuyingPrice(request.getBuyingPrice());
+        product.setSellingPrice(request.getSellingPrice());
+        product.setDiscount(request.getDiscount() == null ? 0.0 : request.getDiscount());
+        product.setCategory(category);
+        if (setStock) {
+            product.setQuantity(String.valueOf(request.getQuantity() == null ? 0 : request.getQuantity()));
+        }
+    }
+
+    private String storeImage(MultipartFile image) {
+        try {
+            return saveImageToDisk(image);
+        } catch (IOException e) {
+            throw new AppException(ErrorCode.INTERNAL_ERROR, "The image couldn't be saved. Please try again.");
+        }
+    }
+
+    private static String blankToNull(String s) {
+        return s == null || s.isBlank() ? null : s.trim();
     }
 
     // --- Image Library (all images in uploadDir) ---
@@ -186,13 +206,18 @@ public class ProductService {
         return Map.of("filename", url.replace("/images/", ""), "url", url);
     }
 
-    public Product assignImage(Long productId, String filename) {
-        String url = libraryImageUrl(filename);
-        Product product = productRepository.findById(productId)
-                .orElseThrow(() -> new EntityNotFoundException("Product not found with id " + productId));
+    public ProductDTO assignImage(Long productId, String filename) {
+        Product product = getProductById(productId);
+        String url;
+        try {
+            url = libraryImageUrl(filename);
+        } catch (IllegalArgumentException | EntityNotFoundException e) {
+            throw new ValidationException("filename", "Choose an image from the library.");
+        }
         product.setImageUrl(url);
         product.setUpdatedAt(LocalDateTime.now());
-        return productRepository.save(product);
+        productRepository.save(product);
+        return getProductDtoById(productId);
     }
 
     /**

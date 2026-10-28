@@ -3,6 +3,9 @@ package com.warsha.erp.controllers;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.warsha.erp.dtos.ProductDTO;
+import com.warsha.erp.dtos.ProductRequest;
+import com.warsha.erp.exceptions.AppException;
+import com.warsha.erp.exceptions.ErrorCode;
 import com.warsha.erp.dtos.ProductImageDto;
 import com.warsha.erp.dtos.ProductImageOrderRequest;
 import com.warsha.erp.dtos.ProductVariantDto;
@@ -37,6 +40,9 @@ public class ProductController {
 
     @Autowired
     private ProductImageService imageService;
+
+    private final ObjectMapper objectMapper = new ObjectMapper()
+            .configure(com.fasterxml.jackson.databind.DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
 
     @GetMapping
     public List<ProductDTO> getAll() {
@@ -91,14 +97,8 @@ public class ProductController {
 
     // Assign an existing library image to a product. Body: { "filename": "abc.jpg" }
     @PutMapping("/{id}/image")
-    public ResponseEntity<?> assignImage(@PathVariable Long id, @RequestBody Map<String, String> body) {
-        try {
-            return ResponseEntity.ok(productService.assignImage(id, body.get("filename")));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
-        } catch (EntityNotFoundException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(Map.of("message", e.getMessage()));
-        }
+    public ProductDTO assignImage(@PathVariable Long id, @RequestBody Map<String, String> body) {
+        return productService.assignImage(id, body.get("filename"));
     }
 
     @GetMapping("/{id}")
@@ -163,37 +163,34 @@ public class ProductController {
         return ResponseEntity.noContent().build();
     }
 
+    /** Multipart: "product" = {@link ProductRequest} as JSON, "image" = the cover image (required). */
     @PostMapping(consumes = { MediaType.MULTIPART_FORM_DATA_VALUE })
-    public ResponseEntity<Product> create(
-            @RequestPart("product") String productJson,
-            @RequestPart("image") MultipartFile image) throws JsonProcessingException {
-
-        // Convert JSON string to ProductModel using Jackson
-        Product product = new ObjectMapper().readValue(productJson, Product.class);
-
-        return new ResponseEntity<>(productService.createProduct(product, image), HttpStatus.CREATED);
+    @ResponseStatus(HttpStatus.CREATED)
+    public ProductDTO create(@RequestPart("product") String productJson,
+                             @RequestPart(value = "image", required = false) MultipartFile image) {
+        return productService.create(readRequest(productJson), image);
     }
 
+    /** Multipart like create; "image" is optional and replaces the cover when sent. */
     @PutMapping(value = "/{id}", consumes = { MediaType.MULTIPART_FORM_DATA_VALUE })
-    public Product updateProduct(
-            @PathVariable Long id,
-            @RequestPart("product") String product,
-            @RequestPart(value = "image", required = false) MultipartFile image) throws JsonProcessingException {
-
-        Product productConverted = new ObjectMapper().readValue(product, Product.class);
-
-        return productService.updateProductWithImage(id, productConverted, image);
+    public ProductDTO updateProduct(@PathVariable Long id,
+                                    @RequestPart("product") String productJson,
+                                    @RequestPart(value = "image", required = false) MultipartFile image) {
+        return productService.update(id, readRequest(productJson), image);
     }
 
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
         productService.deleteProduct(id);
-        return ResponseEntity.noContent().build();
     }
 
-    @DeleteMapping
-    public ResponseEntity<Void> deleteAll() {
-        productService.deleteAll();
-        return ResponseEntity.noContent().build();
+    private ProductRequest readRequest(String json) {
+        try {
+            return objectMapper.readValue(json, ProductRequest.class);
+        } catch (JsonProcessingException e) {
+            throw new AppException(ErrorCode.MALFORMED_REQUEST,
+                    "The product details could not be read. Please check the numbers and try again.");
+        }
     }
 }
