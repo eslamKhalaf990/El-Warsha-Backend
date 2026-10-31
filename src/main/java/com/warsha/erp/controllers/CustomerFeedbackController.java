@@ -163,34 +163,22 @@ public class CustomerFeedbackController {
      * ERP Admin: Moderate feedback (Approve / Reject / Resolve / Feature / Public).
      */
     @PutMapping("/{id}/status")
-    public ResponseEntity<?> updateFeedbackStatus(@PathVariable Long id,
-                                                  @RequestBody UpdateFeedbackStatusRequest request) {
+    public FeedbackResponse updateFeedbackStatus(@PathVariable Long id,
+                                                 @RequestBody UpdateFeedbackStatusRequest request) {
         System.out.println("[" + getTimestamp() + "] INFO: Admin updating status of feedback ID: " + id);
-        try {
-            FeedbackResponse response = feedbackService.updateFeedbackStatus(id, request);
-            return ResponseEntity.ok(response);
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        }
+        return feedbackService.updateFeedbackStatus(id, request);
     }
 
     /**
      * ERP Admin: Submit official reply to customer feedback.
      */
     @PostMapping("/{id}/reply")
-    public ResponseEntity<?> replyToFeedback(@PathVariable Long id,
-                                             @RequestBody AdminReplyRequest request,
-                                             Authentication authentication) {
+    public FeedbackResponse replyToFeedback(@PathVariable Long id,
+                                            @RequestBody AdminReplyRequest request,
+                                            Authentication authentication) {
         String adminUsername = (authentication != null) ? authentication.getName() : "Admin";
         System.out.println("[" + getTimestamp() + "] INFO: Admin " + adminUsername + " replying to feedback ID: " + id);
-        try {
-            FeedbackResponse response = feedbackService.adminReply(id, request.getReply(), adminUsername);
-            return ResponseEntity.ok(response);
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(e.getMessage());
-        } catch (RuntimeException e) {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(e.getMessage());
-        }
+        return feedbackService.adminReply(id, request.getReply(), adminUsername);
     }
 
     /**
