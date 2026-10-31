@@ -14,11 +14,11 @@ import java.util.Optional;
 @Repository
 public interface BankAccountRepository extends JpaRepository<BankAccount, Long> {
 
-    @Query("SELECT new com.warsha.erp.dtos.BankAccountDTO(b.id, b.name, b.accountType, b.currentBalance, b.createdAt) " +
+    @Query("SELECT new com.warsha.erp.dtos.BankAccountDTO(b.id, b.name, b.accountType, b.currentBalance, b.createdAt, b.isOwnerSafe) " +
             "FROM BankAccount b WHERE b.isOwnerSafe = false")
     List<BankAccountDTO> findAvailableAccounts();
 
-    @Query("SELECT new com.warsha.erp.dtos.BankAccountDTO(b.id, b.name, b.accountType, b.currentBalance, b.createdAt) " +
+    @Query("SELECT new com.warsha.erp.dtos.BankAccountDTO(b.id, b.name, b.accountType, b.currentBalance, b.createdAt, b.isOwnerSafe) " +
             "FROM BankAccount b")
     List<BankAccountDTO> findAllAccounts();
 
