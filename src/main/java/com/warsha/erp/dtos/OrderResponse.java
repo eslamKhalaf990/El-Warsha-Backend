@@ -22,6 +22,8 @@ public class OrderResponse {
     private double discount;
     /** The discount typed by staff on top of product discounts; what the edit form should show. */
     private double extraDiscount;
+    /** Store promo code used, if any (its discount is part of extraDiscount). */
+    private String promoCode;
     private double delivery;
     /** Amount still to collect (same as {@link #amountDue}); kept for existing clients. */
     private BigDecimal totalPrice;

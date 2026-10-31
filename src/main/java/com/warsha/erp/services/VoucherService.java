@@ -15,6 +15,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.List;
 import java.util.Optional;
@@ -54,7 +55,7 @@ public class VoucherService {
     @Transactional
     public void delete(Long id) {
         Voucher voucher = find(id);
-        int used = voucher.getCurrentUsageCount() == null ? 0 : voucher.getCurrentUsageCount();
+        int used = used(voucher);
         if (used > 0) {
             throw new BusinessRuleException("\"" + voucher.getCode() + "\" was used " + used
                     + (used == 1 ? " time" : " times") + ". Turn it off instead of deleting it.");
@@ -92,68 +93,80 @@ public class VoucherService {
     }
 
     // --- Store checkout ---
+    // Messages here are shown to store customers, so they are in Arabic.
 
+    /** Cart page: what the code would take off a cart worth {@code cartTotal}. Nothing is saved. */
     public VoucherValidationResponse validateVoucher(ValidateVoucherRequest request) {
-        // 1. Input Sanity Check
-        if (request.getCode() == null || request.getCode().trim().isEmpty()) {
-            return new VoucherValidationResponse(false, "Code cannot be empty", BigDecimal.ZERO, null);
+        String code = normalize(request.getCode());
+        if (code == null) {
+            return new VoucherValidationResponse(false, "اكتب كود الخصم الأول", BigDecimal.ZERO, null);
         }
-
-        // 2. Fetch from DB
-        Optional<Voucher> voucherOpt = voucherRepository.findByCode(request.getCode());
-        
-        if (voucherOpt.isEmpty()) {
-            return new VoucherValidationResponse(false, "Invalid Coupon Code", BigDecimal.ZERO, request.getCode());
+        Optional<Voucher> found = voucherRepository.findByCode(code);
+        if (found.isEmpty()) {
+            return new VoucherValidationResponse(false, "كود الخصم ده غير صحيح", BigDecimal.ZERO, code);
         }
-
-        Voucher voucher = voucherOpt.get();
-
-        // 3. Run Validations
-        if (!voucher.isActive()) {
-            return new VoucherValidationResponse(false, "This coupon is inactive", BigDecimal.ZERO, request.getCode());
+        BigDecimal cartTotal = request.getCartTotal() == null ? BigDecimal.ZERO : request.getCartTotal();
+        String problem = problemWith(found.get(), cartTotal);
+        if (problem != null) {
+            return new VoucherValidationResponse(false, problem, BigDecimal.ZERO, code);
         }
+        return new VoucherValidationResponse(true, "تم تطبيق كود الخصم", discountFor(found.get(), cartTotal), code);
+    }
 
+    /**
+     * Order placement: checks the code again with its row locked, counts one use and
+     * returns the discount for {@code cartTotal} (items after product discounts).
+     * Runs inside the order's transaction, so a failed order gives the use back.
+     */
+    @Transactional
+    public BigDecimal redeem(String rawCode, BigDecimal cartTotal) {
+        String code = normalize(rawCode);
+        Voucher voucher = voucherRepository.findByCodeAndActiveTrue(code)
+                .orElseThrow(() -> new ValidationException("promoCode", "كود الخصم ده غير صحيح أو متوقف"));
+        String problem = problemWith(voucher, cartTotal);
+        if (problem != null) {
+            throw new ValidationException("promoCode", problem);
+        }
+        voucher.setCurrentUsageCount(used(voucher) + 1);
+        voucherRepository.save(voucher);
+        return discountFor(voucher, cartTotal);
+    }
+
+    /** Codes are saved in capitals; blank means no code. */
+    public static String normalize(String code) {
+        return code == null || code.isBlank() ? null : code.trim().toUpperCase();
+    }
+
+    private static String problemWith(Voucher voucher, BigDecimal cartTotal) {
         LocalDate today = LocalDate.now();
-        if (today.isBefore(voucher.getStartDate())) {
-             return new VoucherValidationResponse(false, "Promotion has not started yet", BigDecimal.ZERO, request.getCode());
+        if (!voucher.isActive()) return "كود الخصم ده متوقف حالياً";
+        if (today.isBefore(voucher.getStartDate())) return "كود الخصم ده لسه مبدأش";
+        if (voucher.getEndDate() != null && today.isAfter(voucher.getEndDate())) return "كود الخصم ده انتهى";
+        if (voucher.getMaxUsageLimit() != null && used(voucher) >= voucher.getMaxUsageLimit()) {
+            return "كود الخصم ده خلص عدد مرات استخدامه";
         }
-        
-        if (voucher.getEndDate() != null && today.isAfter(voucher.getEndDate())) {
-            return new VoucherValidationResponse(false, "Coupon has expired", BigDecimal.ZERO, request.getCode());
+        BigDecimal min = voucher.getMinOrderAmount() == null ? BigDecimal.ZERO : voucher.getMinOrderAmount();
+        if (cartTotal.compareTo(min) < 0) {
+            return "الكود ده محتاج طلب بـ " + min.stripTrailingZeros().toPlainString() + " جنيه على الأقل";
         }
+        return null;
+    }
 
-        if (voucher.getMaxUsageLimit() != null && voucher.getCurrentUsageCount() >= voucher.getMaxUsageLimit()) {
-            return new VoucherValidationResponse(false, "Coupon usage limit reached", BigDecimal.ZERO, request.getCode());
-        }
-
-        if (request.getCartTotal().compareTo(voucher.getMinOrderAmount()) < 0) {
-            return new VoucherValidationResponse(false, 
-                "Minimum order of " + voucher.getMinOrderAmount() + " required", 
-                BigDecimal.ZERO, 
-                request.getCode());
-        }
-
-        // 4. Calculate Potential Discount (Simulation)
-        BigDecimal discountAmount;
-
+    /** Percentage (capped by the maximum discount) or a fixed amount, never more than the cart. */
+    private static BigDecimal discountFor(Voucher voucher, BigDecimal cartTotal) {
+        BigDecimal discount;
         if (voucher.getType() == DiscountType.PERCENTAGE) {
-            BigDecimal percentage = voucher.getDiscountValue().divide(BigDecimal.valueOf(100));
-            discountAmount = request.getCartTotal().multiply(percentage);
-
-            // Apply Cap
-            if (voucher.getMaxDiscountAmount() != null && discountAmount.compareTo(voucher.getMaxDiscountAmount()) > 0) {
-                discountAmount = voucher.getMaxDiscountAmount();
+            discount = cartTotal.multiply(voucher.getDiscountValue()).divide(BigDecimal.valueOf(100), 2, RoundingMode.HALF_UP);
+            if (voucher.getMaxDiscountAmount() != null && discount.compareTo(voucher.getMaxDiscountAmount()) > 0) {
+                discount = voucher.getMaxDiscountAmount();
             }
         } else {
-            discountAmount = voucher.getDiscountValue();
+            discount = voucher.getDiscountValue();
         }
+        return discount.min(cartTotal).max(BigDecimal.ZERO);
+    }
 
-        // Safety: Discount can't exceed total
-        if (discountAmount.compareTo(request.getCartTotal()) > 0) {
-            discountAmount = request.getCartTotal();
-        }
-
-        // 5. Return Success
-        return new VoucherValidationResponse(true, "Coupon Applied Successfully", discountAmount, voucher.getCode());
+    private static int used(Voucher voucher) {
+        return voucher.getCurrentUsageCount() == null ? 0 : voucher.getCurrentUsageCount();
     }
 }

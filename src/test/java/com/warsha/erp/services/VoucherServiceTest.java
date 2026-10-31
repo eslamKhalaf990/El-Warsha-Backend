@@ -1,7 +1,9 @@
 package com.warsha.erp.services;
 
 import com.warsha.erp.dtos.VoucherDto;
+import com.warsha.erp.dtos.ValidateVoucherRequest;
 import com.warsha.erp.dtos.VoucherRequest;
+import com.warsha.erp.dtos.VoucherValidationResponse;
 import com.warsha.erp.entities.DiscountType;
 import com.warsha.erp.entities.Voucher;
 import com.warsha.erp.exceptions.AppException;
@@ -100,5 +102,74 @@ class VoucherServiceTest {
         assertThatThrownBy(() -> service.delete(2L))
                 .isInstanceOf(AppException.class)
                 .hasMessageContaining("used 3 times");
+    }
+
+    // --- store checkout ---
+
+    private Voucher live(String code, DiscountType type, String value) {
+        Voucher v = existing(9, code, 0);
+        v.setType(type);
+        v.setDiscountValue(new BigDecimal(value));
+        v.setStartDate(LocalDate.now().minusDays(1));
+        v.setMinOrderAmount(BigDecimal.ZERO);
+        return v;
+    }
+
+    private VoucherValidationResponse check(String code, String cartTotal) {
+        ValidateVoucherRequest r = new ValidateVoucherRequest();
+        r.setCode(code);
+        r.setCartTotal(new BigDecimal(cartTotal));
+        return service.validateVoucher(r);
+    }
+
+    @Test
+    void validatesCodesTypedInAnyCase() {
+        live("SAVE10", DiscountType.PERCENTAGE, "10");
+
+        VoucherValidationResponse res = check(" save10 ", "333");
+
+        assertThat(res.isValid()).isTrue();
+        assertThat(res.getCode()).isEqualTo("SAVE10");
+        assertThat(res.getDiscountAmount()).isEqualByComparingTo("33.30");
+    }
+
+    @Test
+    void capsPercentagesAndNeverExceedsTheCart() {
+        live("BIG", DiscountType.PERCENTAGE, "50").setMaxDiscountAmount(new BigDecimal("40"));
+        assertThat(check("BIG", "200").getDiscountAmount()).isEqualByComparingTo("40");
+
+        live("FLAT", DiscountType.FIXED, "100");
+        assertThat(check("FLAT", "60").getDiscountAmount()).isEqualByComparingTo("60");
+    }
+
+    @Test
+    void explainsWhyACodeCannotBeUsed() {
+        Voucher v = live("MIN", DiscountType.FIXED, "20");
+        v.setMinOrderAmount(new BigDecimal("500.00"));
+        VoucherValidationResponse res = check("MIN", "300");
+        assertThat(res.isValid()).isFalse();
+        assertThat(res.getMessage()).contains("500");
+
+        v.setMinOrderAmount(BigDecimal.ZERO);
+        v.setEndDate(LocalDate.now().minusDays(1));
+        assertThat(check("MIN", "300").isValid()).isFalse();
+
+        assertThat(check("UNKNOWN", "300").isValid()).isFalse();
+        assertThat(check("  ", "300").isValid()).isFalse();
+    }
+
+    @Test
+    void redeemCountsAUseAndRefusesOnceTheLimitIsReached() {
+        Voucher v = live("TWICE", DiscountType.FIXED, "15");
+        v.setMaxUsageLimit(2);
+        when(vouchers.findByCodeAndActiveTrue("TWICE")).thenReturn(Optional.of(v));
+
+        assertThat(service.redeem("twice", new BigDecimal("100"))).isEqualByComparingTo("15");
+        assertThat(service.redeem("TWICE", new BigDecimal("100"))).isEqualByComparingTo("15");
+        assertThat(v.getCurrentUsageCount()).isEqualTo(2);
+
+        assertThatThrownBy(() -> service.redeem("TWICE", new BigDecimal("100")))
+                .isInstanceOf(ValidationException.class);
+        assertThat(v.getCurrentUsageCount()).isEqualTo(2);
     }
 }

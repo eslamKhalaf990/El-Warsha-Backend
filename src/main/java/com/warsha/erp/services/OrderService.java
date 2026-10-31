@@ -14,6 +14,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.temporal.ChronoUnit;
@@ -34,12 +35,14 @@ public class OrderService {
     private final OrderLedgerService ledger;
     private final StockService stockService;
     private final ShippingZoneService shippingZoneService;
+    private final VoucherService voucherService;
 
     public OrderService(OrderRepository orderRepository,
                         CustomerService customerService,
                         InvoiceService invoiceService, EmailService emailService,
                         PaymentService paymentService, OrderLedgerService ledger,
-                        StockService stockService, ShippingZoneService shippingZoneService) {
+                        StockService stockService, ShippingZoneService shippingZoneService,
+                        VoucherService voucherService) {
         this.orderRepository = orderRepository;
         this.customerService = customerService;
         this.invoiceService = invoiceService;
@@ -48,6 +51,7 @@ public class OrderService {
         this.ledger = ledger;
         this.stockService = stockService;
         this.shippingZoneService = shippingZoneService;
+        this.voucherService = voucherService;
     }
 
     // ------------------------------------------------------------------ reads
@@ -107,7 +111,10 @@ public class OrderService {
         return saved;
     }
 
-    /** Store checkout. Prices, delivery and the receiving bank account are decided by the server. */
+    /**
+     * Store checkout. Prices, delivery, the promo code discount and the receiving bank
+     * account are decided by the server.
+     */
     @Transactional
     public Order placeOrder(OrderRequest request, Long customerId, List<MultipartFile> images) {
         Customer customer = customerService.getCustomerByID(customerId);
@@ -123,6 +130,14 @@ public class OrderService {
         Map<Long, Product> products = stockService.lock(productIds(request));
         OrderPricing pricing = fillItems(order, request, products, true,
                 0, shippingZoneService.deliveryPrice(customer.getGovernorate()), request.getDownPayment());
+
+        String promoCode = VoucherService.normalize(request.getPromoCode());
+        if (promoCode != null) {
+            BigDecimal itemsAfterProductDiscounts = pricing.subtotal().subtract(pricing.itemDiscount());
+            pricing = applyPricing(order, pricing.withOrderDiscount(
+                    voucherService.redeem(promoCode, itemsAfterProductDiscounts)));
+            order.setPromoCode(promoCode);
+        }
 
         Order saved = orderRepository.save(order);
         invoiceService.generateInvoice(saved.getId());
@@ -270,6 +285,7 @@ public class OrderService {
         dto.setNotes(order.getNotes());
         dto.setPaymentMethod(paymentMethods.get(order.getId()));
         dto.setDiscount(order.getDiscount());
+        dto.setPromoCode(order.getPromoCode());
         dto.setDelivery(order.getDeliveryCharge());
         dto.applyTotals(order);
 
@@ -324,7 +340,10 @@ public class OrderService {
             order.getItems().add(item);
         }
 
-        OrderPricing pricing = OrderPricing.calculate(lines, orderDiscount, delivery, downPayment);
+        return applyPricing(order, OrderPricing.calculate(lines, orderDiscount, delivery, downPayment));
+    }
+
+    private static OrderPricing applyPricing(Order order, OrderPricing pricing) {
         order.setDeliveryCharge(pricing.delivery().doubleValue());
         order.setDiscount(pricing.totalDiscount().doubleValue());
         order.setTotalPrice(pricing.amountDue().doubleValue());
