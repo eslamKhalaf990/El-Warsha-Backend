@@ -99,18 +99,22 @@ public class VoucherService {
     public VoucherValidationResponse validateVoucher(ValidateVoucherRequest request) {
         String code = normalize(request.getCode());
         if (code == null) {
-            return new VoucherValidationResponse(false, "اكتب كود الخصم الأول", BigDecimal.ZERO, null);
+            return rejected(new Problem("EMPTY", "اكتب كود الخصم الأول"), null);
         }
         Optional<Voucher> found = voucherRepository.findByCode(code);
         if (found.isEmpty()) {
-            return new VoucherValidationResponse(false, "كود الخصم ده غير صحيح", BigDecimal.ZERO, code);
+            return rejected(new Problem("NOT_FOUND", "كود الخصم ده غير صحيح"), code);
         }
         BigDecimal cartTotal = request.getCartTotal() == null ? BigDecimal.ZERO : request.getCartTotal();
-        String problem = problemWith(found.get(), cartTotal);
+        Problem problem = problemWith(found.get(), cartTotal);
         if (problem != null) {
-            return new VoucherValidationResponse(false, problem, BigDecimal.ZERO, code);
+            return rejected(problem, code);
         }
-        return new VoucherValidationResponse(true, "تم تطبيق كود الخصم", discountFor(found.get(), cartTotal), code);
+        return new VoucherValidationResponse(true, "تم تطبيق كود الخصم", discountFor(found.get(), cartTotal), code, null);
+    }
+
+    private static VoucherValidationResponse rejected(Problem problem, String code) {
+        return new VoucherValidationResponse(false, problem.message(), BigDecimal.ZERO, code, problem.reason());
     }
 
     /**
@@ -123,9 +127,9 @@ public class VoucherService {
         String code = normalize(rawCode);
         Voucher voucher = voucherRepository.findByCodeAndActiveTrue(code)
                 .orElseThrow(() -> new ValidationException("promoCode", "كود الخصم ده غير صحيح أو متوقف"));
-        String problem = problemWith(voucher, cartTotal);
+        Problem problem = problemWith(voucher, cartTotal);
         if (problem != null) {
-            throw new ValidationException("promoCode", problem);
+            throw new ValidationException("promoCode", problem.message());
         }
         voucher.setCurrentUsageCount(used(voucher) + 1);
         voucherRepository.save(voucher);
@@ -137,17 +141,23 @@ public class VoucherService {
         return code == null || code.isBlank() ? null : code.trim().toUpperCase();
     }
 
-    private static String problemWith(Voucher voucher, BigDecimal cartTotal) {
+    /** Why a code can't be used: a stable {@code reason} for reports and an Arabic message for the customer. */
+    record Problem(String reason, String message) {
+    }
+
+    private static Problem problemWith(Voucher voucher, BigDecimal cartTotal) {
         LocalDate today = LocalDate.now();
-        if (!voucher.isActive()) return "كود الخصم ده متوقف حالياً";
-        if (today.isBefore(voucher.getStartDate())) return "كود الخصم ده لسه مبدأش";
-        if (voucher.getEndDate() != null && today.isAfter(voucher.getEndDate())) return "كود الخصم ده انتهى";
+        if (!voucher.isActive()) return new Problem("INACTIVE", "كود الخصم ده متوقف حالياً");
+        if (today.isBefore(voucher.getStartDate())) return new Problem("NOT_STARTED", "كود الخصم ده لسه مبدأش");
+        if (voucher.getEndDate() != null && today.isAfter(voucher.getEndDate())) {
+            return new Problem("EXPIRED", "كود الخصم ده انتهى");
+        }
         if (voucher.getMaxUsageLimit() != null && used(voucher) >= voucher.getMaxUsageLimit()) {
-            return "كود الخصم ده خلص عدد مرات استخدامه";
+            return new Problem("USED_UP", "كود الخصم ده خلص عدد مرات استخدامه");
         }
         BigDecimal min = voucher.getMinOrderAmount() == null ? BigDecimal.ZERO : voucher.getMinOrderAmount();
         if (cartTotal.compareTo(min) < 0) {
-            return "الكود ده محتاج طلب بـ " + min.stripTrailingZeros().toPlainString() + " جنيه على الأقل";
+            return new Problem("MIN_ORDER", "الكود ده محتاج طلب بـ " + min.stripTrailingZeros().toPlainString() + " جنيه على الأقل");
         }
         return null;
     }

@@ -129,6 +129,7 @@ class VoucherServiceTest {
         VoucherValidationResponse res = check(" save10 ", "333");
 
         assertThat(res.isValid()).isTrue();
+        assertThat(res.getReason()).isNull();
         assertThat(res.getCode()).isEqualTo("SAVE10");
         assertThat(res.getDiscountAmount()).isEqualByComparingTo("33.30");
     }
@@ -149,13 +150,15 @@ class VoucherServiceTest {
         VoucherValidationResponse res = check("MIN", "300");
         assertThat(res.isValid()).isFalse();
         assertThat(res.getMessage()).contains("500");
+        assertThat(res.getReason()).isEqualTo("MIN_ORDER");
 
         v.setMinOrderAmount(BigDecimal.ZERO);
         v.setEndDate(LocalDate.now().minusDays(1));
         assertThat(check("MIN", "300").isValid()).isFalse();
+        assertThat(check("MIN", "300").getReason()).isEqualTo("EXPIRED");
 
-        assertThat(check("UNKNOWN", "300").isValid()).isFalse();
-        assertThat(check("  ", "300").isValid()).isFalse();
+        assertThat(check("UNKNOWN", "300").getReason()).isEqualTo("NOT_FOUND");
+        assertThat(check("  ", "300").getReason()).isEqualTo("EMPTY");
     }
 
     @Test
