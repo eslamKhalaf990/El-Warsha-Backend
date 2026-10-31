@@ -4,6 +4,7 @@ import com.warsha.erp.dtos.AnalyticsDtos.*;
 import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.AnalyticsRepository;
 import com.warsha.erp.services.AnalyticsCalculator.OrderFact;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +26,7 @@ public class AnalyticsService {
     private final AnalyticsRepository repository;
     private final Clock clock;
 
+    @Autowired
     public AnalyticsService(AnalyticsRepository repository) {
         this(repository, Clock.systemDefaultZone());
     }
