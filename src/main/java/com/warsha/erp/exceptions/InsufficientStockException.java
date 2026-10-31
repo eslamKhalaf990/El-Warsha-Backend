@@ -1,11 +1,9 @@
-package com.warsha.erp.exceptions; // Ensure this matches your project structure
+package com.warsha.erp.exceptions;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.ResponseStatus;
+/** Not enough stock to fulfil an order line. Produces 409 {@code INSUFFICIENT_STOCK}. */
+public class InsufficientStockException extends AppException {
 
-@ResponseStatus(HttpStatus.BAD_REQUEST)
-public class InsufficientStockException extends RuntimeException {
     public InsufficientStockException(String message) {
-        super(message);
+        super(ErrorCode.INSUFFICIENT_STOCK, message);
     }
 }

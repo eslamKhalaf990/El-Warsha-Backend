@@ -1,6 +1,6 @@
 package com.warsha.erp.services;
 
-import com.warsha.erp.dtos.CreateOrderRequest;
+import com.warsha.erp.dtos.OrderRequest;
 import com.warsha.erp.entities.Order;
 import com.warsha.erp.entities.OrderItems;
 import com.warsha.erp.entities.Product;
@@ -114,7 +114,7 @@ public class EmailService {
         return tempPaths;
     }
 
-    public void sendNewOrderNotification(Order order, CreateOrderRequest request, List<String> imagePaths) {
+    public void sendNewOrderNotification(Order order, OrderRequest request, List<String> imagePaths) {
         String orderId = String.valueOf(order.getId());
         System.out.println("[" + getTimestamp() + "] INFO: Preparing email notification for Order ID: " + orderId);
 

@@ -24,7 +24,8 @@ public class Order {
     private LocalDate orderDate;
 
     @Column(name= "Status", nullable = false)
-    private String status;
+    @Convert(converter = OrderStatusConverter.class)
+    private OrderStatus status;
 
     @Column(name= "OrderSource", nullable = false)
     private String OrderSource;

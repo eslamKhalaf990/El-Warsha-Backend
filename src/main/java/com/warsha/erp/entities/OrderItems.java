@@ -31,4 +31,15 @@ public class OrderItems {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "ProductID", nullable = false)
     private Product product;
+
+    // Size/color that was ordered; null for products without variants
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "VariantID")
+    private ProductVariant variant;
+
+    /** "Linen Shirt (XL / Black)", or just the product name without a variant. */
+    public String displayName() {
+        String name = product.getName();
+        return variant == null ? name : name + " (" + variant.label() + ")";
+    }
 }

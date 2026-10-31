@@ -1,5 +1,8 @@
 package com.warsha.erp.services;
 
+import com.warsha.erp.exceptions.NotFoundException;
+import com.warsha.erp.exceptions.ValidationException;
+
 import com.warsha.erp.dtos.*;
 import com.warsha.erp.entities.*;
 import com.warsha.erp.repository.*;
@@ -229,11 +232,14 @@ public class CustomerFeedbackService {
     public FeedbackResponse updateFeedbackStatus(Long id, UpdateFeedbackStatusRequest request) {
         System.out.println("[" + getTimestamp() + "] INFO: Updating status of feedback ID: " + id);
 
-        CustomerFeedback feedback = feedbackRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Feedback not found with ID: " + id));
+        CustomerFeedback feedback = findFeedback(id);
 
         if (request.getStatus() != null && !request.getStatus().trim().isEmpty()) {
-            feedback.setStatus(request.getStatus().trim().toUpperCase());
+            String status = request.getStatus().trim().toUpperCase();
+            if (!MODERATION_STATUSES.contains(status)) {
+                throw new ValidationException("status", "Status must be one of " + String.join(", ", MODERATION_STATUSES) + ".");
+            }
+            feedback.setStatus(status);
         }
 
         if (request.getIsPublic() != null) {
@@ -253,11 +259,13 @@ public class CustomerFeedbackService {
         System.out.println("[" + getTimestamp() + "] INFO: Admin replying to feedback ID: " + id);
 
         if (replyText == null || replyText.trim().isEmpty()) {
-            throw new IllegalArgumentException("Reply message cannot be empty.");
+            throw new ValidationException("reply", "Write a reply first.");
+        }
+        if (replyText.trim().length() > MAX_REPLY_LENGTH) {
+            throw new ValidationException("reply", "A reply can be at most " + MAX_REPLY_LENGTH + " characters.");
         }
 
-        CustomerFeedback feedback = feedbackRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Feedback not found with ID: " + id));
+        CustomerFeedback feedback = findFeedback(id);
 
         feedback.setAdminReply(replyText.trim());
         feedback.setRepliedBy(adminUsername != null ? adminUsername : "Admin");
@@ -309,8 +317,15 @@ public class CustomerFeedbackService {
     @Transactional
     public void deleteFeedback(Long id) {
         System.out.println("[" + getTimestamp() + "] WARN: Deleting feedback ID: " + id);
-        CustomerFeedback feedback = feedbackRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Feedback not found with ID: " + id));
-        feedbackRepository.delete(feedback);
+        feedbackRepository.delete(findFeedback(id));
+    }
+
+    /** Moderation states the ERP can set. */
+    static final List<String> MODERATION_STATUSES = List.of("PENDING", "APPROVED", "REJECTED", "RESOLVED");
+
+    static final int MAX_REPLY_LENGTH = 2000;
+
+    private CustomerFeedback findFeedback(Long id) {
+        return feedbackRepository.findById(id).orElseThrow(() -> new NotFoundException("Review", id));
     }
 }

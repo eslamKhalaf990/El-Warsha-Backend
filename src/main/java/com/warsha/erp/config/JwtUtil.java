@@ -4,19 +4,24 @@ import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.SignatureAlgorithm;
 import io.jsonwebtoken.security.Keys;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Date;
-import java.util.function.Function;
 
+@Slf4j
 @Component
 public class JwtUtil {
+
+    public static final String ROLE_CLAIM = "role";
+    public static final String ROLE_ADMIN = "ADMIN";
+    public static final String ROLE_CUSTOMER = "CUSTOMER";
+
+    private static final long EXPIRATION_MS = 1000L * 60 * 60 * 8; // 8 hours
 
     private final SecretKey key;
 
@@ -24,75 +29,37 @@ public class JwtUtil {
         this.key = Keys.hmacShaKeyFor(secretKeyString.getBytes(StandardCharsets.UTF_8));
     }
 
-    // Formatter for consistent log timestamps
-    private final DateTimeFormatter logFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
-
-    private String getTimestamp() {
-        return LocalDateTime.now().format(logFormat);
-    }
-
     public String generateToken(String username, String role) {
-        // 8 hours
-        long EXPIRATION = 1000 * 60 * 60 * 8;
-        Date expDate = new Date(System.currentTimeMillis() + EXPIRATION);
-
-        System.out.println("[" + getTimestamp() + "] INFO: Generating JWT for " + username + " (Role: " + role + ")");
-        System.out.println("[" + getTimestamp() + "] INFO: Token will expire at: " + expDate);
-
+        Date now = new Date();
         return Jwts.builder()
                 .setSubject(username)
-                .setIssuedAt(new Date())
-                .claim("role", role)
-                .setExpiration(expDate)
+                .setIssuedAt(now)
+                .claim(ROLE_CLAIM, role)
+                .setExpiration(new Date(now.getTime() + EXPIRATION_MS))
                 .signWith(key, SignatureAlgorithm.HS256)
                 .compact();
     }
 
+    /**
+     * Parses and verifies the token (signature and expiry).
+     *
+     * @throws io.jsonwebtoken.JwtException if the token is invalid or expired
+     */
+    public Claims parse(String token) {
+        return Jwts.parserBuilder()
+                .setSigningKey(key)
+                .build()
+                .parseClaimsJws(token)
+                .getBody();
+    }
+
     public String extractUsername(String token) {
-        return extractClaim(token, Claims::getSubject);
-    }
-
-    public <T> T extractClaim(String token, Function<Claims, T> claimsResolver) {
-        final Claims claims = extractAllClaims(token);
-        return claimsResolver.apply(claims);
-    }
-
-    private Claims extractAllClaims(String token) {
-        try {
-            return Jwts.parserBuilder()
-                    .setSigningKey(key)
-                    .build()
-                    .parseClaimsJws(token)
-                    .getBody();
-        } catch (Exception e) {
-            System.out.println("[" + getTimestamp() + "] ERROR: Failed to parse JWT claims: " + e.getMessage());
-            throw e;
-        }
-    }
-
-    private boolean isTokenExpired(String token) {
-        Date expiration = extractAllClaims(token).getExpiration();
-        boolean expired = expiration.before(new Date());
-        if (expired) {
-            System.out.println("[" + getTimestamp() + "] WARN: Token expired at " + expiration);
-        }
-        return expired;
+        return parse(token).getSubject();
     }
 
     public boolean validateToken(String token, UserDetails userDetails) {
-        final String username = extractUsername(token);
-        boolean usernameMatches = username.equals(userDetails.getUsername());
-        boolean expired = isTokenExpired(token);
-
-        if (!usernameMatches) {
-            System.out.println("[" + getTimestamp() + "] ERROR: Token username '" + username + "' does not match UserDetails '" + userDetails.getUsername() + "'");
-        }
-
-        boolean isValid = (usernameMatches && !expired);
-        if (isValid) {
-            System.out.println("[" + getTimestamp() + "] SUCCESS: Token validation passed for " + username);
-        }
-
-        return isValid;
+        Claims claims = parse(token);
+        return claims.getSubject().equals(userDetails.getUsername())
+                && claims.getExpiration().after(new Date());
     }
 }

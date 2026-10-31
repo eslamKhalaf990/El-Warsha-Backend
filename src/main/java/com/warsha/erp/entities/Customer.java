@@ -1,5 +1,7 @@
 package com.warsha.erp.entities;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
@@ -38,6 +40,8 @@ public class Customer {
     @Column(name = "Email")
     private String email;
 
+    // Accepted on sign-up, never sent back
+    @JsonProperty(access = JsonProperty.Access.WRITE_ONLY)
     @Column(name = "Password")
     private String password;
 
@@ -50,9 +54,11 @@ public class Customer {
     @Column(name = "Status")
     private String status = "Active";
 
+    @JsonIgnore
     @Column(name = "Otp")
     private String otp;
 
+    @JsonIgnore
     @Column(name = "OtpExpirationTime")
     private LocalDateTime otpExpirationTime;
 

@@ -16,4 +16,7 @@ public class BankAccountDTO {
     private String accountType;
     private BigDecimal currentBalance;
     private LocalDateTime createdAt;
+
+    /** True for the owner's safe, which only shows after the owner password. */
+    private boolean ownerSafe;
 }

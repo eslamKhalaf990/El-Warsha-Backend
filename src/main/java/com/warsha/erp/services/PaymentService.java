@@ -10,7 +10,11 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collection;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Service
@@ -63,6 +67,16 @@ public class PaymentService {
         return paymentRepo.findByOrderId(orderId).stream()
                 .map(PaymentDto::new)
                 .collect(Collectors.toList());
+    }
+
+    /** Payment method of each order (from its first payment), in one query. */
+    public Map<Long, String> getPaymentMethodsByOrder(Collection<Long> orderIds) {
+        Map<Long, String> methods = new HashMap<>();
+        if (orderIds.isEmpty()) return methods;
+        paymentRepo.findByOrderIdIn(orderIds).stream()
+                .sorted(Comparator.comparing(Payment::getId))
+                .forEach(p -> methods.putIfAbsent(p.getOrder().getId(), p.getPaymentMethod()));
+        return methods;
     }
 
     public void deletePaymentsByOrderId(Long orderId) {

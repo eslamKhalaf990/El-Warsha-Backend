@@ -1,36 +1,44 @@
 package com.warsha.erp.controllers;
 
-import com.warsha.erp.entities.Category;
+import com.warsha.erp.dtos.CategoryDto;
+import com.warsha.erp.dtos.CategoryRequest;
 import com.warsha.erp.services.CategoryService;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-
+/** Product categories. GET is public (store catalog); changes need an admin. */
 @RestController
 @RequestMapping("/category")
 public class CategoryController {
-    @Autowired
-    private CategoryService categoryService;
+
+    private final CategoryService categoryService;
+
+    public CategoryController(CategoryService categoryService) {
+        this.categoryService = categoryService;
+    }
 
     @GetMapping
-    public List<Category> getAll() {
+    public List<CategoryDto> getAll() {
         return categoryService.getAllCategories();
     }
 
     @PostMapping
-    public Category create(@RequestBody Category category) {
-        return categoryService.saveCategory(category);
-    }
-
-    @DeleteMapping("/{id}")
-    public void delete(@PathVariable Long id) {
-        categoryService.deleteCategory(id);
+    @ResponseStatus(HttpStatus.CREATED)
+    public CategoryDto create(@Valid @RequestBody CategoryRequest request) {
+        return categoryService.create(request);
     }
 
     @PutMapping("/{id}")
-    public Category update(@PathVariable Long id, @RequestBody Category category) {
-        return categoryService.updateCategory(id, category);
+    public CategoryDto update(@PathVariable Long id, @Valid @RequestBody CategoryRequest request) {
+        return categoryService.update(id, request);
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
+        categoryService.delete(id);
     }
 }

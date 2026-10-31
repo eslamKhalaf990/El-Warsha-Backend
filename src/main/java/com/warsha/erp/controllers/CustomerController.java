@@ -3,10 +3,12 @@ package com.warsha.erp.controllers;
 import com.warsha.erp.config.JwtUtil;
 import com.warsha.erp.dtos.CustomerCountByGovernorate;
 import com.warsha.erp.dtos.CustomerInfoDTO;
+import com.warsha.erp.dtos.CustomerRequest;
 import com.warsha.erp.entities.Customer;
 import com.warsha.erp.services.CustomerService;
 import com.warsha.erp.services.EmailService;
 import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.Valid;
 import org.springframework.http.*;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -35,39 +37,42 @@ public class CustomerController {
         return LocalDateTime.now().format(logFormat);
     }
 
+    /** Every customer, newest first. Passwords and verification codes are never included. */
     @GetMapping
-    public List<Customer> getAll() {
-        System.out.println("[" + getTimestamp() + "] INFO: Request to fetch all customers");
-        return customerService.getAllCustomers();
+    public List<CustomerInfoDTO> getAll() {
+        return customerService.getAllCustomerDtos();
     }
 
     @GetMapping("/countsByGovernorate")
     public List<CustomerCountByGovernorate> getCountsByGovernorate() {
-        System.out.println("[" + getTimestamp() + "] INFO: Request for customer counts by governorate");
         return customerService.getCustomerCountsByGovernorate();
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<Customer> getById(@PathVariable Long id) {
-        System.out.println("[" + getTimestamp() + "] INFO: Request to fetch customer ID: " + id);
-        return ResponseEntity.ok(customerService.getCustomerByID(id));
+    public CustomerInfoDTO getById(@PathVariable Long id) {
+        return customerService.getCustomerInfo(id);
     }
 
     @GetMapping("/{id}/info")
-    public ResponseEntity<CustomerInfoDTO> getCustomerInfo(@PathVariable Long id) {
-        System.out.println("[" + getTimestamp() + "] INFO: Request to fetch customer info ID: " + id);
-        return ResponseEntity.ok(customerService.getCustomerInfo(id));
+    public CustomerInfoDTO getCustomerInfo(@PathVariable Long id) {
+        return customerService.getCustomerInfo(id);
     }
 
+    /** A customer entered by staff in the ERP. */
     @PostMapping
-    public ResponseEntity<Customer> create(@RequestBody Customer customer) {
-        System.out.println("[" + getTimestamp() + "] INFO: Request to create new customer (ERP Admin): " + customer.getFullName());
-        return new ResponseEntity<>(customerService.createCustomer(customer), HttpStatus.CREATED);
+    @ResponseStatus(HttpStatus.CREATED)
+    public CustomerInfoDTO create(@Valid @RequestBody CustomerRequest request) {
+        return customerService.createFromErp(request);
     }
 
     @PostMapping("/customerSignUp")
     public ResponseEntity<?> customerSignUp(@RequestBody Customer customer) {
         System.out.println("[" + getTimestamp() + "] INFO: New customer self-signup attempt: " + customer.getEmail());
+
+        // Messages here are plain text read by the storefronts; never include exception details
+        if (customerService.emailExists(customer.getEmail())) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: This email is already registered.");
+        }
 
         try {
             Customer savedCustomer = customerService.createCustomer(customer);
@@ -78,28 +83,23 @@ public class CustomerController {
             return ResponseEntity.status(HttpStatus.CREATED).body("Registration successful. Please check your email for the verification code.");
         } catch (Exception e) {
             System.out.println("[" + getTimestamp() + "] ERROR: Customer sign-up failed: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: " + e.getMessage());
+            String reason = e instanceof IllegalArgumentException && String.valueOf(e.getMessage()).contains("governorate")
+                    ? "Invalid governorate."
+                    : "Please check your details and try again.";
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: " + reason);
         }
     }
 
     @PutMapping("/{id}")
-    public ResponseEntity<Customer> update(@PathVariable Long id, @RequestBody Customer customer) {
-        System.out.println("[" + getTimestamp() + "] INFO: Request to update customer ID: " + id);
-        return ResponseEntity.ok(customerService.updateCustomer(id, customer));
+    public CustomerInfoDTO update(@PathVariable Long id, @Valid @RequestBody CustomerRequest request) {
+        return customerService.updateFromErp(id, request);
     }
 
+    /** Refused (409) while the customer has orders, reviews or account history. */
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(@PathVariable Long id) {
-        System.out.println("[" + getTimestamp() + "] WARN: Request to delete customer ID: " + id);
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Long id) {
         customerService.deleteCustomer(id);
-        return ResponseEntity.noContent().build();
-    }
-
-    @DeleteMapping
-    public ResponseEntity<Void> deleteAll() {
-        System.out.println("[" + getTimestamp() + "] ALERT: Request to DELETE ALL customers received!");
-        customerService.deleteAll();
-        return ResponseEntity.noContent().build();
     }
 
     @PostMapping("/resend-otp")
@@ -116,7 +116,7 @@ public class CustomerController {
             }
         } catch (Exception e) {
             System.out.println("[" + getTimestamp() + "] ERROR: Resending OTP failed: " + e.getMessage());
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Error: " + e.getMessage());
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Could not send the verification code.");
         }
     }
 }

@@ -1,6 +1,6 @@
 package com.warsha.erp.services;
 
-import com.warsha.erp.dtos.CreateOrderRequest;
+import com.warsha.erp.dtos.OrderRequest;
 import com.warsha.erp.entities.Customer;
 import com.warsha.erp.entities.Order;
 import com.warsha.erp.entities.OrderItems;
@@ -153,7 +153,7 @@ public final class EmailTemplates {
      *
      * @param productImageCids product id -> inline image cid, for products whose image is on disk
      */
-    public static String newOrderAdmin(Order order, CreateOrderRequest request, Map<Long, String> productImageCids,
+    public static String newOrderAdmin(Order order, OrderRequest request, Map<Long, String> productImageCids,
                                        int attachmentCount, LocalDateTime placedAt) {
         Customer c = order.getCustomer();
         String orderId = String.valueOf(order.getId());
@@ -167,7 +167,7 @@ public final class EmailTemplates {
             int qty = item.getQuantity() == null ? 0 : item.getQuantity();
             subtotal += unit * qty;
             pieces += qty;
-            items.append(itemRow(p, qty, unit, productImageCids.get(p.getProductID())));
+            items.append(itemRow(p, item.displayName(), qty, unit, productImageCids.get(p.getProductID())));
         }
 
         double discount = nz(order.getDiscount());
@@ -247,7 +247,7 @@ public final class EmailTemplates {
     }
 
     /** Plain-text fallback of the admin notification, for clients that block HTML. */
-    public static String newOrderAdminText(Order order, CreateOrderRequest request, int attachmentCount) {
+    public static String newOrderAdminText(Order order, OrderRequest request, int attachmentCount) {
         Customer c = order.getCustomer();
         StringBuilder sb = new StringBuilder()
                 .append("طلب جديد #").append(order.getId()).append("\n\n")
@@ -256,7 +256,7 @@ public final class EmailTemplates {
         if (notBlank(c.getSecondaryPhone())) sb.append("هاتف إضافي: ").append(c.getSecondaryPhone()).append("\n");
         sb.append("العنوان: ").append(joinAddress(c)).append("\n\nالمنتجات:\n");
         for (OrderItems item : order.getItems()) {
-            sb.append("- ").append(item.getProduct().getName()).append(" × ").append(item.getQuantity())
+            sb.append("- ").append(item.displayName()).append(" × ").append(item.getQuantity())
                     .append(" = ").append(plainMoney(nz(item.getUnitPrice()) * item.getQuantity())).append("\n");
         }
         sb.append("\nالشحن: ").append(plainMoney(nz(order.getDeliveryCharge())))
@@ -270,7 +270,7 @@ public final class EmailTemplates {
 
     // ---------------------------------------------------------------- pieces
 
-    private static String itemRow(Product p, int qty, double unit, String imageCid) {
+    private static String itemRow(Product p, String name, int qty, double unit, String imageCid) {
         String thumb = imageCid != null
                 ? "<img src=\"cid:" + imageCid + "\" width=\"56\" height=\"56\" alt=\"\" style=\"display:block;width:56px;height:56px;object-fit:cover;border-radius:10px;border:1px solid " + LINE + ";\">"
                 : "<div style=\"width:56px;height:56px;line-height:56px;border-radius:10px;background:" + BLUSH + ";color:" + BURGUNDY + ";text-align:center;font-weight:700;font-size:20px;\">"
@@ -279,7 +279,7 @@ public final class EmailTemplates {
         return "<tr>"
                 + "<td style=\"padding:8px 0;width:64px;vertical-align:middle;\">" + thumb + "</td>"
                 + "<td style=\"padding:8px 10px;vertical-align:middle;\">"
-                + "<div style=\"font-weight:700;font-size:14px;\">" + esc(p.getName()) + "</div>" + sku
+                + "<div style=\"font-weight:700;font-size:14px;\">" + esc(name) + "</div>" + sku
                 + "<div style=\"font-size:13px;color:" + MUTED + ";\">" + qty + " × " + money(unit) + "</div>"
                 + "</td>"
                 + "<td style=\"padding:8px 0;vertical-align:middle;text-align:left;font-weight:700;white-space:nowrap;\">" + money(unit * qty) + "</td>"

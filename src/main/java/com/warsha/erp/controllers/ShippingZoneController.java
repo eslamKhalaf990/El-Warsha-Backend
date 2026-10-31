@@ -1,24 +1,27 @@
 package com.warsha.erp.controllers;
 
 import com.warsha.erp.dtos.GovernoratePriceDto;
+import com.warsha.erp.dtos.ShippingZoneRequest;
 import com.warsha.erp.entities.ShippingZone;
-import com.warsha.erp.services.EgyptGovernorates;
 import com.warsha.erp.services.ShippingZoneService;
-import org.springframework.beans.factory.annotation.Autowired;
+import jakarta.validation.Valid;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 
+/** Delivery prices per governorate. GETs are public (store); changes need an admin. */
 @RestController
 @RequestMapping("/shipping")
 public class ShippingZoneController {
 
-    @Autowired
-    private ShippingZoneService shippingZoneService;
+    private final ShippingZoneService shippingZoneService;
+
+    public ShippingZoneController(ShippingZoneService shippingZoneService) {
+        this.shippingZoneService = shippingZoneService;
+    }
 
     @GetMapping
     public List<ShippingZone> getAll() {
@@ -27,41 +30,38 @@ public class ShippingZoneController {
 
     @GetMapping("/governorates")
     public ResponseEntity<List<GovernoratePriceDto>> getAllGovernoratePrices() {
-        return ResponseEntity.ok(EgyptGovernorates.getAllGovernoratePrices());
+        return ResponseEntity.ok(shippingZoneService.activePrices());
     }
 
     @GetMapping("/governorates/map")
     public ResponseEntity<Map<String, Double>> getAllGovernoratePricesMap() {
-        return ResponseEntity.ok(EgyptGovernorates.getAllRatesMap());
+        return ResponseEntity.ok(shippingZoneService.activePriceMap());
     }
 
     @GetMapping("/governorates/price")
-    public ResponseEntity<?> getGovernoratePrice(@RequestParam String governorate) {
-        try {
-            return ResponseEntity.ok(EgyptGovernorates.getGovernoratePrice(governorate));
-        } catch (IllegalArgumentException e) {
-            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
-        }
+    public ResponseEntity<GovernoratePriceDto> getGovernoratePrice(@RequestParam String governorate) {
+        return ResponseEntity.ok(shippingZoneService.priceFor(governorate));
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<ShippingZone> getById(@PathVariable Integer id) {
-        Optional<ShippingZone> shippingZone = shippingZoneService.getShippingZoneById(id);
-        return shippingZone.map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    public ShippingZone getById(@PathVariable Integer id) {
+        return shippingZoneService.getShippingZone(id);
     }
 
     @PostMapping
-    public ShippingZone create(@RequestBody ShippingZone shippingZone) {
-        return shippingZoneService.saveShippingZone(shippingZone);
-    }
-
-    @DeleteMapping("/{id}")
-    public void delete(@PathVariable Integer id) {
-        shippingZoneService.deleteShippingZone(id);
+    @ResponseStatus(HttpStatus.CREATED)
+    public ShippingZone create(@Valid @RequestBody ShippingZoneRequest request) {
+        return shippingZoneService.create(request);
     }
 
     @PutMapping("/{id}")
-    public ShippingZone updatePrice(@PathVariable Integer id, @RequestParam BigDecimal shippingFee) {
-        return shippingZoneService.updateShippingPrice(id, shippingFee);
+    public ShippingZone update(@PathVariable Integer id, @Valid @RequestBody ShippingZoneRequest request) {
+        return shippingZoneService.update(id, request);
+    }
+
+    @DeleteMapping("/{id}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(@PathVariable Integer id) {
+        shippingZoneService.deleteShippingZone(id);
     }
 }

@@ -14,6 +14,8 @@ public interface BankTransactionRepository extends JpaRepository<BankTransaction
 
     List<BankTransaction> findByBankAccountIdOrderByCreatedAtDesc(Long bankAccountId);
 
+    List<BankTransaction> findByReferenceTypeAndReferenceId(String referenceType, Long referenceId);
+
     @Query("SELECT SUM(CASE WHEN t.transactionType = 'Deposit' THEN t.amount ELSE -t.amount END) " +
            "FROM BankTransaction t WHERE t.bankAccount.id = :accountId")
     BigDecimal getBalanceByAccount(@Param("accountId") Long accountId);
