@@ -19,8 +19,8 @@ import org.springframework.security.web.authentication.UsernamePasswordAuthentic
 /**
  * Access rules, in three tiers:
  * <ul>
- *   <li><b>Public</b>: login/sign-up flows, the read-only storefront catalog, and reviews
- *       (guests may leave feedback).</li>
+ *   <li><b>Public</b>: login/sign-up flows, the read-only storefront catalog, reviews
+ *       (guests may leave feedback) and store visitor tracking.</li>
  *   <li><b>CUSTOMER</b>: the e-commerce customer's own orders and reviews.</li>
  *   <li><b>ADMIN</b>: everything else, i.e. the whole ERP.</li>
  * </ul>
@@ -92,6 +92,9 @@ public class SecurityConfig {
                         .requestMatchers(HttpMethod.GET, "/feedbacks/customer").hasRole(CUSTOMER)
                         .requestMatchers(HttpMethod.GET, "/feedbacks/*").permitAll()
                         .requestMatchers(HttpMethod.POST, "/feedbacks", "/feedbacks/*/comments").permitAll()
+
+                        // --- Public: store visitor tracking (a customer token, if sent, links the events) ---
+                        .requestMatchers(HttpMethod.POST, "/events").permitAll()
 
                         // --- CUSTOMER: own orders (placeOrder / customer are the pre-v2 paths) ---
                         .requestMatchers(HttpMethod.POST, "/orders/checkout", "/orders/placeOrder").hasRole(CUSTOMER)
