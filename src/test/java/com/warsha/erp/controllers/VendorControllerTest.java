@@ -21,13 +21,15 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class VendorControllerTest {
 
     private final VendorService service = mock(VendorService.class);
+    private final com.warsha.erp.services.ProductService productService =
+            mock(com.warsha.erp.services.ProductService.class);
     private MockMvc mvc;
 
     @BeforeEach
     void setUp() {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
-        mvc = MockMvcBuilders.standaloneSetup(new VendorController(service))
+        mvc = MockMvcBuilders.standaloneSetup(new VendorController(service, productService))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setValidator(validator)
                 .build();
@@ -70,5 +72,19 @@ class VendorControllerTest {
     void deleteArchivesAndReturns204() throws Exception {
         mvc.perform(delete("/vendors/4")).andExpect(status().isNoContent());
         verify(service).archive(4L);
+    }
+
+    @Test
+    void productsListsWhatWasBoughtFromTheVendor() throws Exception {
+        com.warsha.erp.dtos.ProductDTO p = new com.warsha.erp.dtos.ProductDTO();
+        p.setId(12L);
+        p.setName("Silver ring");
+        p.setVendorId(4L);
+        when(productService.getProductsByVendorId(4L)).thenReturn(List.of(p));
+
+        mvc.perform(get("/vendors/4/products"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$[0].id").value(12))
+                .andExpect(jsonPath("$[0].vendorId").value(4));
     }
 }

@@ -6,7 +6,9 @@ import com.warsha.erp.exceptions.ApiError;
 import com.warsha.erp.exceptions.AppException;
 import com.warsha.erp.exceptions.ErrorCode;
 import com.warsha.erp.exceptions.ValidationException;
+import com.warsha.erp.entities.Vendor;
 import com.warsha.erp.repository.CategoryRepository;
+import com.warsha.erp.repository.VendorRepository;
 import jakarta.validation.Validator;
 import org.springframework.transaction.annotation.Transactional;
 import java.util.Comparator;
@@ -48,6 +50,7 @@ public class ProductService {
     private final ProductVariantRepository variantRepository;
     private final ProductImageRepository imageRepository;
     private final CategoryRepository categoryRepository;
+    private final VendorRepository vendorRepository;
     private final Validator validator;
 
     // This pulls the path from your application.properties,
@@ -58,11 +61,12 @@ public class ProductService {
     @Autowired
     public ProductService(ProductRepository productRepository, ProductVariantRepository variantRepository,
                           ProductImageRepository imageRepository, CategoryRepository categoryRepository,
-                          Validator validator) {
+                          VendorRepository vendorRepository, Validator validator) {
         this.productRepository = productRepository;
         this.variantRepository = variantRepository;
         this.imageRepository = imageRepository;
         this.categoryRepository = categoryRepository;
+        this.vendorRepository = vendorRepository;
         this.validator = validator;
     }
 
@@ -75,6 +79,12 @@ public class ProductService {
     }
 
     /** One product with its sizes/colors, for the product page. */
+    /** Products linked to this vendor (not deleted), newest first. */
+    public List<ProductDTO> getProductsByVendorId(Long vendorId) {
+        if (!vendorRepository.existsById(vendorId)) throw new NotFoundException("Vendor", vendorId);
+        return toDtos(productRepository.findByVendorId(vendorId));
+    }
+
     public ProductDTO getProductDtoById(Long id) {
         return toDtos(List.of(getProductById(id))).get(0);
     }
@@ -165,9 +175,23 @@ public class ProductService {
         product.setSellingPrice(request.getSellingPrice());
         product.setDiscount(request.getDiscount() == null ? 0.0 : request.getDiscount());
         product.setCategory(category);
+        product.setVendor(vendorFor(product, request.getVendorId()));
         if (setStock) {
             product.setQuantity(String.valueOf(request.getQuantity() == null ? 0 : request.getQuantity()));
         }
+    }
+
+    /** The vendor to link: an active one, or the archived vendor the product already has. */
+    private Vendor vendorFor(Product product, Long vendorId) {
+        if (vendorId == null) return null;
+        Vendor vendor = vendorRepository.findById(vendorId)
+                .orElseThrow(() -> new ValidationException("vendorId", "Choose a vendor from the list."));
+        boolean active = !Boolean.FALSE.equals(vendor.getIsActive());
+        boolean alreadyLinked = product.getVendor() != null && vendorId.equals(product.getVendor().getVendorId());
+        if (!active && !alreadyLinked) {
+            throw new ValidationException("vendorId", "This vendor is archived. Choose another vendor.");
+        }
+        return vendor;
     }
 
     private String storeImage(MultipartFile image) {
@@ -274,6 +298,10 @@ public class ProductService {
                     if (product.getCategory() != null) {
                         dto.setCategoryId(product.getCategory().getCategoryId());
                         dto.setCategoryName(product.getCategory().getName());
+                    }
+                    if (product.getVendor() != null) {
+                        dto.setVendorId(product.getVendor().getVendorId());
+                        dto.setVendorName(product.getVendor().getName());
                     }
                     List<ProductVariant> variants = variantsByProduct.getOrDefault(product.getProductID(), List.of());
                     dto.setHasVariants(!variants.isEmpty());

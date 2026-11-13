@@ -11,6 +11,8 @@ import com.warsha.erp.repository.CategoryRepository;
 import com.warsha.erp.repository.ProductImageRepository;
 import com.warsha.erp.repository.ProductRepository;
 import com.warsha.erp.repository.ProductVariantRepository;
+import com.warsha.erp.repository.VendorRepository;
+import com.warsha.erp.entities.Vendor;
 import jakarta.validation.Validation;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +36,8 @@ class ProductServiceTest {
     private final ProductVariantRepository variants = mock(ProductVariantRepository.class);
     private final ProductImageRepository images = mock(ProductImageRepository.class);
     private final CategoryRepository categories = mock(CategoryRepository.class);
-    private final ProductService service = new ProductService(products, variants, images, categories,
+    private final VendorRepository vendors = mock(VendorRepository.class);
+    private final ProductService service = new ProductService(products, variants, images, categories, vendors,
             Validation.buildDefaultValidatorFactory().getValidator());
     private Product saved;
 
@@ -148,5 +151,72 @@ class ProductServiceTest {
         assertThat(existing.getDeleted()).isEqualTo("true");
         verify(products, never()).delete(any());
         assertThatThrownBy(() -> service.deleteProduct(9L)).isInstanceOf(NotFoundException.class);
+    }
+
+    // ------------------------------------------------------------ vendor link
+
+    private Vendor vendor(long id, String name, boolean active) {
+        Vendor v = new Vendor();
+        v.setVendorId(id);
+        v.setName(name);
+        v.setIsActive(active);
+        when(vendors.findById(id)).thenReturn(Optional.of(v));
+        when(vendors.existsById(id)).thenReturn(true);
+        return v;
+    }
+
+    @Test
+    void aProductCanBeLinkedToAVendorAndUnlinked() {
+        vendor(4, "Silver Co", true);
+        ProductRequest r = request();
+        r.setVendorId(4L);
+
+        var dto = service.create(r, image());
+        assertThat(saved.getVendor().getVendorId()).isEqualTo(4L);
+        assertThat(dto.getVendorId()).isEqualTo(4L);
+        assertThat(dto.getVendorName()).isEqualTo("Silver Co");
+
+        r.setVendorId(null);
+        var updated = service.update(50L, r, null);
+        assertThat(saved.getVendor()).isNull();
+        assertThat(updated.getVendorName()).isNull();
+    }
+
+    @Test
+    void anUnknownOrArchivedVendorIsRefused() {
+        when(vendors.findById(99L)).thenReturn(Optional.empty());
+        ProductRequest r = request();
+        r.setVendorId(99L);
+        assertThatThrownBy(() -> service.create(r, image()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessage("Choose a vendor from the list.");
+
+        vendor(5, "Old Co", false);
+        r.setVendorId(5L);
+        assertThatThrownBy(() -> service.create(r, image()))
+                .isInstanceOf(ValidationException.class)
+                .hasMessageContaining("archived");
+    }
+
+    @Test
+    void aProductKeepsItsVendorAfterTheVendorIsArchived() {
+        Vendor v = vendor(4, "Silver Co", true);
+        ProductRequest r = request();
+        r.setVendorId(4L);
+        service.create(r, image());
+
+        v.setIsActive(false);
+        service.update(50L, r, null);
+        assertThat(saved.getVendor().getVendorId()).isEqualTo(4L);
+    }
+
+    @Test
+    void vendorProductsNeedAKnownVendor() {
+        when(vendors.existsById(8L)).thenReturn(false);
+        assertThatThrownBy(() -> service.getProductsByVendorId(8L)).isInstanceOf(NotFoundException.class);
+
+        vendor(4, "Silver Co", true);
+        when(products.findByVendorId(4L)).thenReturn(List.of());
+        assertThat(service.getProductsByVendorId(4L)).isEmpty();
     }
 }

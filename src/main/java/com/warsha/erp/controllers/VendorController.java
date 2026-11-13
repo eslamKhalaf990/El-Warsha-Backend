@@ -1,7 +1,9 @@
 package com.warsha.erp.controllers;
 
+import com.warsha.erp.dtos.ProductDTO;
 import com.warsha.erp.dtos.VendorRequest;
 import com.warsha.erp.entities.Vendor;
+import com.warsha.erp.services.ProductService;
 import com.warsha.erp.services.VendorService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -16,10 +18,17 @@ import java.util.List;
 @RequiredArgsConstructor
 public class VendorController {
     private final VendorService service;
+    private final ProductService productService;
 
     @GetMapping
     public List<Vendor> getAll(@RequestParam(defaultValue = "false") boolean includeArchived) {
         return service.getAllVendors(includeArchived);
+    }
+
+    /** Products bought from this vendor (linked on the product form), newest first. */
+    @GetMapping("/{id}/products")
+    public List<ProductDTO> products(@PathVariable Long id) {
+        return productService.getProductsByVendorId(id);
     }
 
     @PostMapping

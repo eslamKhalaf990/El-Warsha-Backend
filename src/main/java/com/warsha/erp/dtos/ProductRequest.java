@@ -48,4 +48,7 @@ public class ProductRequest {
 
     @NotNull(message = "Choose a category.")
     private Long categoryId;
+
+    /** The vendor the product is bought from; null for none. */
+    private Long vendorId;
 }

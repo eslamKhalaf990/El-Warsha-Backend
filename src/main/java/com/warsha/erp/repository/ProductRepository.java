@@ -30,6 +30,9 @@ public interface ProductRepository extends JpaRepository<Product, Long> {
     long countAllByCategoryId(@Param("categoryId") Long categoryId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM Product p WHERE p.Vendor.vendorId = :vendorId AND (p.deleted IS NULL OR p.deleted <> 'true') ORDER BY p.ProductID DESC")
+    List<Product> findByVendorId(@Param("vendorId") Long vendorId);
+
     @Query("SELECT p FROM Product p WHERE p.ProductID IN :ids ORDER BY p.ProductID")
     List<Product> findAllByIdWithLock(@Param("ids") List<Long> ids);
 
