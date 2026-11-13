@@ -9,9 +9,12 @@ import com.warsha.erp.exceptions.ValidationException;
 import com.warsha.erp.repository.OrderRepository;
 import com.warsha.erp.repository.ProductRepository;
 import com.warsha.erp.repository.ProductVariantRepository;
+import com.warsha.erp.repository.VoucherRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.*;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -28,6 +31,7 @@ class OrderServiceStockTest {
     private final ProductVariantRepository variantRepository = mock(ProductVariantRepository.class);
     private final CustomerService customerService = mock(CustomerService.class);
     private final PaymentService paymentService = mock(PaymentService.class);
+    private final VoucherRepository voucherRepository = mock(VoucherRepository.class);
     private OrderService service;
 
     private final Map<Long, Product> db = new HashMap<>();
@@ -36,7 +40,8 @@ class OrderServiceStockTest {
     void setUp() {
         service = new OrderService(orderRepository, customerService, mock(InvoiceService.class),
                 mock(EmailService.class), paymentService, mock(OrderLedgerService.class),
-                new StockService(productRepository, variantRepository), mock(ShippingZoneService.class));
+                new StockService(productRepository, variantRepository), mock(ShippingZoneService.class),
+                new VoucherService(voucherRepository));
 
         db.put(1L, StockServiceTest.product(1, "5", 0));
         db.put(2L, StockServiceTest.product(2, "1", 0));
@@ -217,5 +222,67 @@ class OrderServiceStockTest {
 
         assertThat(xl.getQuantity()).isEqualTo(2);
         assertThat(stockOf(1)).isEqualTo("7");
+    }
+
+    // --- store promo codes ---
+
+    private Voucher promo(String code, DiscountType type, String value, Integer limit, int used) {
+        Voucher v = new Voucher();
+        v.setCode(code);
+        v.setType(type);
+        v.setDiscountValue(new BigDecimal(value));
+        v.setStartDate(LocalDate.now().minusDays(1));
+        v.setMaxUsageLimit(limit);
+        v.setCurrentUsageCount(used);
+        when(voucherRepository.findByCodeAndActiveTrue(code)).thenReturn(Optional.of(v));
+        return v;
+    }
+
+    private OrderRequest storeRequest(String promoCode) {
+        db.get(1L).setSellingPrice(100.0);
+        db.get(1L).setDiscount(10.0);
+        OrderRequest r = request(new long[][]{{1, 2}});
+        r.setPromoCode(promoCode);
+        r.setDownPayment(50);
+        return r;
+    }
+
+    @Test
+    void storeOrderTakesThePromoDiscountAndCountsOneUse() {
+        Voucher v = promo("SAVE10", DiscountType.PERCENTAGE, "10", 5, 1);
+
+        Order order = service.placeOrder(storeRequest(" save10 "), 7L, List.of());
+
+        // items 200, product discount 20, promo 10% of 180 = 18
+        assertThat(order.getDiscount()).isEqualTo(38.0);
+        assertThat(order.getTotalPrice()).isEqualTo(200 - 38 - 50.0);
+        assertThat(order.getPromoCode()).isEqualTo("SAVE10");
+        assertThat(v.getCurrentUsageCount()).isEqualTo(2);
+    }
+
+    @Test
+    void storeOrderWithoutACodeHasNoPromoDiscount() {
+        Order order = service.placeOrder(storeRequest("  "), 7L, List.of());
+
+        assertThat(order.getDiscount()).isEqualTo(20.0);
+        assertThat(order.getPromoCode()).isNull();
+        verifyNoInteractions(voucherRepository);
+    }
+
+    @Test
+    void storeOrderIsRefusedWhenTheCodeIsUsedUp() {
+        Voucher v = promo("ONCE", DiscountType.FIXED, "30", 1, 1);
+
+        assertThatThrownBy(() -> service.placeOrder(storeRequest("ONCE"), 7L, List.of()))
+                .isInstanceOf(ValidationException.class);
+        assertThat(v.getCurrentUsageCount()).isEqualTo(1);
+    }
+
+    @Test
+    void storeOrderIsRefusedForAnUnknownCode() {
+        when(voucherRepository.findByCodeAndActiveTrue(any())).thenReturn(Optional.empty());
+
+        assertThatThrownBy(() -> service.placeOrder(storeRequest("NOPE"), 7L, List.of()))
+                .isInstanceOf(ValidationException.class);
     }
 }

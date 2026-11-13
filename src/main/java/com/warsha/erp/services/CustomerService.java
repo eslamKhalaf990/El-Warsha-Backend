@@ -153,7 +153,7 @@ public class CustomerService {
      */
     static String normalizePhone(String phone) {
         if (phone == null) return "";
-        String s = phone.replaceAll("[\\s\\-()]", "");
+        String s = toLatinDigits(phone).replaceAll("[\\s\\-()]", "");
         if (s.startsWith("+20")) s = "0" + s.substring(3);
         else if (s.startsWith("0020")) s = "0" + s.substring(4);
         return s;
@@ -168,29 +168,136 @@ public class CustomerService {
         return c.isEmpty() ? null : c;
     }
 
-    public Customer createCustomer(Customer customer) {
-        System.out.println("[" + getTimestamp() + "] INFO: Creating new customer: " + customer.getFullName());
-
-        customer.setCreatedAt(LocalDateTime.now());
-
-        if (customer.getPassword() != null) {
-            customer.setPassword(passwordEncoder.encode(customer.getPassword()));
-            if (!shippingZoneService.isValid(customer.getGovernorate())) {
-                System.out.println("[" + getTimestamp() + "] WARN: Invalid governorate: " + customer.getGovernorate());
-                throw new IllegalArgumentException("Invalid governorate provided: " + customer.getGovernorate());
-            }
+    /** Arabic-Indic (٠-٩) and Persian (۰-۹) digits → 0-9, so "٠١٠..." typed on an Arabic keyboard still matches. */
+    private static String toLatinDigits(String s) {
+        StringBuilder out = new StringBuilder(s.length());
+        for (char ch : s.toCharArray()) {
+            if (ch >= '٠' && ch <= '٩') out.append((char) ('0' + ch - '٠'));
+            else if (ch >= '۰' && ch <= '۹') out.append((char) ('0' + ch - '۰'));
+            else out.append(ch);
         }
+        return out.toString();
+    }
+
+    // ------------------------------------------------------------ store accounts
+
+    public static final int MIN_PASSWORD_LENGTH = 6;
+
+    /** The customer whose phone matches once both sides are normalised, if any. */
+    public Optional<Customer> findByPhone(String phone) {
+        String wanted = normalizePhone(phone);
+        if (wanted.isEmpty()) return Optional.empty();
+        return customerRepository.findAll().stream()
+                .filter(c -> wanted.equals(normalizePhone(c.getPhone())))
+                // A store account wins over an ERP-only record if both share the number
+                .min((a, b) -> Boolean.compare(!hasPassword(a), !hasPassword(b)));
+    }
+
+    /** Store login: "username" is a phone number, or an email for accounts made before phone sign-up. */
+    public Optional<Customer> findForLogin(String username) {
+        if (username == null || username.isBlank()) return Optional.empty();
+        String u = username.trim();
+        return u.contains("@") ? customerRepository.findByEmail(u) : findByPhone(u);
+    }
+
+    private static boolean hasPassword(Customer c) {
+        return c.getPassword() != null && !c.getPassword().isBlank();
+    }
+
+    /**
+     * Store self sign-up with phone + password; email is optional and not verified.
+     * The account is active straight away. If staff already entered this phone in the ERP
+     * (a record with no password), that record becomes the account so its orders stay with it.
+     *
+     * @throws ValidationException bad phone, password, governorate or missing name/address
+     * @throws ConflictException   the phone (field "phone") or email (field "email") already has a store account
+     */
+    @Transactional
+    public Customer registerFromStore(Customer req) {
+        String phone = normalizePhone(req.getPhone());
+        if (!phone.matches("01[0125]\\d{8}")) {
+            throw new ValidationException("phone", "Enter a valid Egyptian mobile number, e.g. 01012345678.");
+        }
+        if (req.getPassword() == null || req.getPassword().length() < MIN_PASSWORD_LENGTH) {
+            throw new ValidationException("password", "Password must be at least " + MIN_PASSWORD_LENGTH + " characters.");
+        }
+        String name = clean(req.getFullName());
+        if (name.isEmpty()) throw new ValidationException("fullName", "Name is required.");
+        String address = blankToNull(req.getAddress());
+        if (address == null) throw new ValidationException("address", "Address is required.");
+        if (!shippingZoneService.isValid(req.getGovernorate())) {
+            throw new ValidationException("governorate", "Invalid governorate.");
+        }
+        String secondary = normalizePhone(req.getSecondaryPhone());
+        String email = blankToNull(req.getEmail());
+
+        Customer customer = findByPhone(phone).orElse(null);
+        if (customer != null && hasPassword(customer)) {
+            throw new ConflictException("phone", "This phone number is already registered.");
+        }
+        if (email != null) {
+            Long selfId = customer == null ? null : customer.getId();
+            customerRepository.findByEmail(email)
+                    .filter(other -> !other.getId().equals(selfId))
+                    .ifPresent(other -> {
+                        throw new ConflictException("email", "This email is already registered.");
+                    });
+        }
+
+        if (customer == null) {
+            customer = new Customer();
+            customer.setCreatedAt(LocalDateTime.now());
+            customer.setFullName(name);
+            customer.setPhone(phone);
+            customer.setSecondaryPhone(secondary.isEmpty() ? null : secondary);
+            customer.setGovernorate(clean(req.getGovernorate()));
+            customer.setCity(blankToNull(req.getCity()));
+            customer.setAddress(address);
+            customer.setEmail(email);
+        } else {
+            // Claiming an ERP record: keep what staff entered, fill in only what's blank
+            System.out.println("[" + getTimestamp() + "] INFO: Store sign-up claims ERP customer #" + customer.getId());
+            if (blankToNull(customer.getFullName()) == null) customer.setFullName(name);
+            if (blankToNull(customer.getSecondaryPhone()) == null && !secondary.isEmpty()) customer.setSecondaryPhone(secondary);
+            if (blankToNull(customer.getGovernorate()) == null) customer.setGovernorate(clean(req.getGovernorate()));
+            if (blankToNull(customer.getCity()) == null) customer.setCity(blankToNull(req.getCity()));
+            if (blankToNull(customer.getAddress()) == null) customer.setAddress(address);
+            if (blankToNull(customer.getEmail()) == null) customer.setEmail(email);
+            customer.setUpdatedAt(LocalDateTime.now());
+        }
+        customer.setPassword(passwordEncoder.encode(req.getPassword()));
+        customer.setStatus("Active");
+        customer.setOtp(null);
+        customer.setOtpExpirationTime(null);
 
         Customer saved = customerRepository.save(customer);
-        System.out.println("[" + getTimestamp() + "] SUCCESS: Customer saved with ID: " + saved.getId());
-
-        // Generate and save OTP
-        if(saved.getEmail() != null && !saved.getEmail().isEmpty()){
-            String otp = emailService.sendOtpEmail(saved.getEmail());
-            saveOtp(saved.getEmail(), otp);
-        }
-
+        System.out.println("[" + getTimestamp() + "] SUCCESS: Store account ready for customer #" + saved.getId());
         return saved;
+    }
+
+    /** Marks a store account active and drops any leftover sign-up code. */
+    @Transactional
+    public Customer activate(Customer customer) {
+        customer.setStatus("Active");
+        customer.setOtp(null);
+        customer.setOtpExpirationTime(null);
+        return customerRepository.save(customer);
+    }
+
+    /** Staff set a new store password from the ERP, e.g. for a customer with no email to reset by. */
+    @Transactional
+    public void setPasswordFromErp(Long id, String newPassword) {
+        if (newPassword == null || newPassword.length() < MIN_PASSWORD_LENGTH) {
+            throw new ValidationException("password", "Password must be at least " + MIN_PASSWORD_LENGTH + " characters.");
+        }
+        Customer customer = getCustomerByID(id);
+        customer.setPassword(passwordEncoder.encode(newPassword));
+        customer.setStatus("Active");
+        customer.setOtp(null);
+        customer.setOtpExpirationTime(null);
+        customer.setUpdatedAt(LocalDateTime.now());
+        customerRepository.save(customer);
+        System.out.println("[" + getTimestamp() + "] SUCCESS: Staff set a new store password for customer #" + id);
     }
 
     public void saveOtp(String email, String otp) {
@@ -252,6 +359,19 @@ public class CustomerService {
              System.out.println("[" + getTimestamp() + "] ERROR: Customer not found for verification: " + email);
         }
         return false;
+    }
+
+    public boolean changeCustomerPassword(Long id, String oldPassword, String newPassword) {
+        if (newPassword == null || newPassword.length() < MIN_PASSWORD_LENGTH) return false;
+        Customer customer = customerRepository.findById(id).orElse(null);
+        if (customer == null || customer.getPassword() == null
+                || !passwordEncoder.matches(oldPassword, customer.getPassword())) {
+            return false;
+        }
+        customer.setPassword(passwordEncoder.encode(newPassword));
+        customer.setUpdatedAt(LocalDateTime.now());
+        customerRepository.save(customer);
+        return true;
     }
 
     public boolean changeCustomerPassword(String email, String oldPassword, String newPassword) {

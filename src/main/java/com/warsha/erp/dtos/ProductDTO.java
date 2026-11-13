@@ -27,6 +27,9 @@ public class ProductDTO {
     private String quantity;
     private String categoryName;
     private Long categoryId;
+    /** Null when no vendor is linked. */
+    private Long vendorId;
+    private String vendorName;
     private boolean hasVariants;
     /** Active sizes/colors; empty for products without variants. */
     private List<ProductVariantDto> variants = List.of();

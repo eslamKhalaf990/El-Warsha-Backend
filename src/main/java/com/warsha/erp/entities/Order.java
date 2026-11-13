@@ -42,6 +42,10 @@ public class Order {
     @Column(name= "Notes")
     private String Notes;
 
+    /** Store promo code used on this order, in capitals; null when none. */
+    @Column(name = "PromoCode")
+    private String promoCode;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "CustomerID", nullable = false)
     private Customer customer;

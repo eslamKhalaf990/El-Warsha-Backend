@@ -12,4 +12,6 @@ public class VoucherValidationResponse {
     private String message;
     private BigDecimal discountAmount;
     private String code;
+    /** Why the code was refused (EMPTY, NOT_FOUND, INACTIVE, NOT_STARTED, EXPIRED, USED_UP, MIN_ORDER); null when valid. */
+    private String reason;
 }

@@ -65,29 +65,28 @@ public class CustomerController {
         return customerService.createFromErp(request);
     }
 
+    /**
+     * Store sign-up with phone + password (email optional). The account is active at once, with no
+     * OTP: the store logs in right after with the same phone and password.
+     * Errors are the usual ApiError JSON: 400 VALIDATION_FAILED or 409 CONFLICT, with the field
+     * ("phone", "email", "password", "governorate", ...) in fieldErrors.
+     */
     @PostMapping("/customerSignUp")
-    public ResponseEntity<?> customerSignUp(@RequestBody Customer customer) {
-        System.out.println("[" + getTimestamp() + "] INFO: New customer self-signup attempt: " + customer.getEmail());
+    @ResponseStatus(HttpStatus.CREATED)
+    public String customerSignUp(@RequestBody Customer customer) {
+        Customer saved = customerService.registerFromStore(customer);
+        System.out.println("[" + getTimestamp() + "] SUCCESS: Customer sign-up for #" + saved.getId());
+        return "Registration successful.";
+    }
 
-        // Messages here are plain text read by the storefronts; never include exception details
-        if (customerService.emailExists(customer.getEmail())) {
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: This email is already registered.");
-        }
+    /** Staff set a customer's store password (customers without an email can't reset it themselves). */
+    @PutMapping("/{id}/password")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void setPassword(@PathVariable Long id, @RequestBody SetPasswordRequest request) {
+        customerService.setPasswordFromErp(id, request.password());
+    }
 
-        try {
-            Customer savedCustomer = customerService.createCustomer(customer);
-            System.out.println("[" + getTimestamp() + "] SUCCESS: Customer sign-up successful for " + savedCustomer.getEmail() + ". Pending verification.");
-
-            // Standard Flow: Do NOT return a valid login token for a pending account.
-            // Return a message so the frontend knows to route them to the OTP verification screen.
-            return ResponseEntity.status(HttpStatus.CREATED).body("Registration successful. Please check your email for the verification code.");
-        } catch (Exception e) {
-            System.out.println("[" + getTimestamp() + "] ERROR: Customer sign-up failed: " + e.getMessage());
-            String reason = e instanceof IllegalArgumentException && String.valueOf(e.getMessage()).contains("governorate")
-                    ? "Invalid governorate."
-                    : "Please check your details and try again.";
-            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Registration failed: " + reason);
-        }
+    record SetPasswordRequest(String password) {
     }
 
     @PutMapping("/{id}")

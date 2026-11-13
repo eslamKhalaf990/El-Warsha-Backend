@@ -45,9 +45,16 @@ public record OrderPricing(
             itemDiscount = itemDiscount.add(money(line.unitDiscount()).multiply(qty));
         }
 
-        OrderPricing pricing = new OrderPricing(round(subtotal), round(itemDiscount),
-                money(orderDiscount), money(delivery), money(downPayment));
+        return checked(new OrderPricing(round(subtotal), round(itemDiscount),
+                money(orderDiscount), money(delivery), money(downPayment)));
+    }
 
+    /** The same order with a different order-level discount (a store promo code), checked again. */
+    public OrderPricing withOrderDiscount(BigDecimal orderDiscount) {
+        return checked(new OrderPricing(subtotal, itemDiscount, round(orderDiscount), delivery, downPayment));
+    }
+
+    private static OrderPricing checked(OrderPricing pricing) {
         if (pricing.totalDiscount().compareTo(pricing.subtotal()) > 0) {
             throw new ValidationException("discount", "The discount (" + pricing.totalDiscount()
                     + " EGP) can't be more than the items total (" + pricing.subtotal() + " EGP).");

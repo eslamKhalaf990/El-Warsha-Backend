@@ -1,5 +1,6 @@
 package com.warsha.erp.controllers;
 
+import com.warsha.erp.config.CustomerUserDetails;
 import com.warsha.erp.config.JwtUtil;
 import com.warsha.erp.entities.Customer;
 import com.warsha.erp.entities.User;
@@ -16,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.*;
 import org.springframework.security.authentication.*;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -67,13 +69,22 @@ public class AuthController {
         System.out.println("[" + getTimestamp() + "] INFO: Customer Login attempt for: " + loginRequest.getUsername());
 
         try {
-            Customer customer = customerService.findByEmail(loginRequest.getUsername());
-            
-            if (customer != null && passwordEncoder.matches(loginRequest.getPassword(), customer.getPassword())) {
-                
+            // Phone (or, for older accounts, email) + password
+            Customer customer = customerService.findForLogin(loginRequest.getUsername()).orElse(null);
+
+            if (customer != null && customer.getPassword() != null && loginRequest.getPassword() != null
+                    && passwordEncoder.matches(loginRequest.getPassword(), customer.getPassword())) {
+
+                // Sign-up no longer needs an OTP, so accounts left "Pending" by the old email flow
+                // are activated by logging in with the right password.
+                if ("Pending".equals(customer.getStatus())) {
+                    customer = customerService.activate(customer);
+                }
+
                 if ("Active".equals(customer.getStatus())) {
-                    String token = jwtUtil.generateToken(customer.getEmail(), JwtUtil.ROLE_CUSTOMER);
-                    System.out.println("[" + getTimestamp() + "] SUCCESS: Customer authenticated: " + customer.getEmail());
+                    // Subject is the customer id: phone-only customers have no email
+                    String token = jwtUtil.generateToken(String.valueOf(customer.getId()), JwtUtil.ROLE_CUSTOMER);
+                    System.out.println("[" + getTimestamp() + "] SUCCESS: Customer authenticated: #" + customer.getId());
 
                     userActivityLogService.logCustomerLogin(customer.getId(), request);
 
@@ -85,13 +96,6 @@ public class AuthController {
                             customer.getEmail(),
                             customer.getGovernorate())
                     );
-                } else if ("Pending".equals(customer.getStatus())) {
-                    System.out.println("[" + getTimestamp() + "] INFO: Customer account pending verification: " + customer.getEmail());
-                    
-                    String otp = emailService.sendOtpEmail(customer.getEmail());
-                    customerService.saveOtp(customer.getEmail(), otp);
-                    
-                    return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Account needs verification. OTP sent to email.");
                 } else {
                      System.out.println("[" + getTimestamp() + "] WARN: Customer account status: " + customer.getStatus());
                      return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Account is not active.");
@@ -120,10 +124,18 @@ public class AuthController {
     }
 
     @PostMapping("/changePassword")
-    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request) {
-        System.out.println("[" + getTimestamp() + "] INFO: Change password attempt for: " + request.email());
-
-        boolean isChanged = customerService.changeCustomerPassword(request.email(), request.oldPassword(), request.newPassword());
+    public ResponseEntity<?> changePassword(@RequestBody ChangePasswordRequest request,
+                                            @AuthenticationPrincipal Object principal) {
+        // A logged-in customer is identified by their token (phone-only customers have no email);
+        // the email in the body is the pre-v2 way and still works for email accounts.
+        boolean isChanged;
+        if (principal instanceof CustomerUserDetails c) {
+            System.out.println("[" + getTimestamp() + "] INFO: Change password attempt for customer #" + c.getId());
+            isChanged = customerService.changeCustomerPassword(c.getId(), request.oldPassword(), request.newPassword());
+        } else {
+            System.out.println("[" + getTimestamp() + "] INFO: Change password attempt for: " + request.email());
+            isChanged = customerService.changeCustomerPassword(request.email(), request.oldPassword(), request.newPassword());
+        }
 
         if (isChanged) {
             return ResponseEntity.ok("Password changed successfully");

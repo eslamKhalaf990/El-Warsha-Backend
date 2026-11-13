@@ -8,6 +8,7 @@ import com.warsha.erp.entities.Order;
 import com.warsha.erp.entities.OrderStatus;
 import com.warsha.erp.exceptions.GlobalExceptionHandler;
 import com.warsha.erp.services.OrderService;
+import com.warsha.erp.services.StoreTrackingService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 class OrderControllerTest {
 
     private final OrderService service = mock(OrderService.class);
+    private final StoreTrackingService tracking = mock(StoreTrackingService.class);
     private MockMvc mvc;
 
     private static final String VALID_ORDER = """
@@ -48,7 +50,7 @@ class OrderControllerTest {
         LocalValidatorFactoryBean validator = new LocalValidatorFactoryBean();
         validator.afterPropertiesSet();
 
-        mvc = MockMvcBuilders.standaloneSetup(new OrderController(service))
+        mvc = MockMvcBuilders.standaloneSetup(new OrderController(service, tracking))
                 .setControllerAdvice(new GlobalExceptionHandler())
                 .setConversionService(conversion)
                 .setValidator(validator)
@@ -149,6 +151,34 @@ class OrderControllerTest {
             mvc.perform(multipart(path).file(order)).andExpect(status().isCreated());
         }
         verify(service, times(2)).placeOrder(any(), eq(44L), any());
+    }
+
+    @Test
+    void checkoutPassesTheTrackingHeadersAndGrandTotal() throws Exception {
+        loginAsCustomer(44);
+        OrderResponse response = new OrderResponse();
+        response.setOrderId(12L);
+        response.setGrandTotal(new java.math.BigDecimal("350.00"));
+        when(service.toResponse(any())).thenReturn(response);
+        MockMultipartFile order = new MockMultipartFile("order", "", MediaType.APPLICATION_JSON_VALUE,
+                "{\"paymentMethod\": \"InstaPay\", \"orderSource\": \"Website\", \"items\": [{\"productId\": 1, \"quantity\": 1}]}".getBytes());
+
+        mvc.perform(multipart("/orders/checkout").file(order)
+                        .header("X-Visitor-Id", "visitor-0001").header("X-Session-Id", "session-0001"))
+                .andExpect(status().isCreated());
+        verify(tracking).recordOrder("visitor-0001", "session-0001", 44L, 12L, new java.math.BigDecimal("350.00"));
+    }
+
+    @Test
+    void checkoutSucceedsWhenTrackingFails() throws Exception {
+        loginAsCustomer(44);
+        doThrow(new RuntimeException("db down")).when(tracking).recordOrder(any(), any(), any(), any(), any());
+        MockMultipartFile order = new MockMultipartFile("order", "", MediaType.APPLICATION_JSON_VALUE,
+                "{\"paymentMethod\": \"InstaPay\", \"orderSource\": \"Website\", \"items\": [{\"productId\": 1, \"quantity\": 1}]}".getBytes());
+
+        mvc.perform(multipart("/orders/checkout").file(order))
+                .andExpect(status().isCreated())
+                .andExpect(jsonPath("$.orderId").value(12));
     }
 
     @Test

@@ -44,6 +44,7 @@ class SecurityConfigTest {
         @DeleteMapping("/api/bank/resetTransactions") String reset() { return "ok"; }
         @GetMapping("/invoice/pdf/{id}") String invoice(@PathVariable Long id) { return "ok"; }
         @PostMapping("/feedbacks") String feedback() { return "ok"; }
+        @PostMapping("/events") String events() { return "ok"; }
     }
 
     @Autowired private MockMvc mvc;
@@ -80,6 +81,12 @@ class SecurityConfigTest {
         mvc.perform(delete("/products"))
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.code").value("UNAUTHENTICATED"));
+    }
+
+    @Test
+    void trackingIsPublicWithOrWithoutACustomerToken() throws Exception {
+        mvc.perform(post("/events")).andExpect(status().isOk());
+        mvc.perform(post("/events").header("Authorization", customerToken)).andExpect(status().isOk());
     }
 
     @Test

@@ -41,6 +41,11 @@ public class Product {
     @JoinColumn(name = "Category", nullable = false)
     private Category Category;
 
+    /** Who the shop buys this product from; optional (schema-sync-product-vendor.sql). */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "VendorID")
+    private Vendor Vendor;
+
     @Column(name = "ImageUrl")
     private String ImageUrl;
 

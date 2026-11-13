@@ -37,7 +37,8 @@ class OrderServiceStatusTest {
     @BeforeEach
     void setUp() {
         service = new OrderService(orderRepository, customerService,
-                invoiceService, emailService, paymentService, ledger, stockService, mock(ShippingZoneService.class));
+                invoiceService, emailService, paymentService, ledger, stockService, mock(ShippingZoneService.class),
+                mock(VoucherService.class));
     }
 
     private Order order(OrderStatus status) {

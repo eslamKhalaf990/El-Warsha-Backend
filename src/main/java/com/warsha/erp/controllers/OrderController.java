@@ -8,7 +8,9 @@ import com.warsha.erp.dtos.OrderStatusRequest;
 import com.warsha.erp.entities.Order;
 import com.warsha.erp.entities.OrderStatus;
 import com.warsha.erp.services.OrderService;
+import com.warsha.erp.services.StoreTrackingService;
 import jakarta.validation.Valid;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -36,18 +38,22 @@ import java.util.List;
  *   GET    /orders/stats/by-governorate
  *
  * Store (CUSTOMER)
- *   POST   /orders/checkout             multipart: order (JSON) + images
+ *   POST   /orders/checkout             multipart: order (JSON) + images;
+ *                                        optional X-Visitor-Id / X-Session-Id link it to tracking
  *   GET    /orders/mine
  * </pre>
  */
+@Slf4j
 @RestController
 @RequestMapping("/orders")
 public class OrderController {
 
     private final OrderService orderService;
+    private final StoreTrackingService trackingService;
 
-    public OrderController(OrderService orderService) {
+    public OrderController(OrderService orderService, StoreTrackingService trackingService) {
         this.orderService = orderService;
+        this.trackingService = trackingService;
     }
 
     // ------------------------------------------------------------------- ERP
@@ -107,11 +113,20 @@ public class OrderController {
     public ResponseEntity<OrderResponse> checkout(
             @Valid @RequestPart("order") OrderRequest request,
             @RequestPart(value = "images", required = false) List<MultipartFile> images,
-            @AuthenticationPrincipal CustomerUserDetails customer) {
+            @AuthenticationPrincipal CustomerUserDetails customer,
+            @RequestHeader(value = "X-Visitor-Id", required = false) String visitorId,
+            @RequestHeader(value = "X-Session-Id", required = false) String sessionId) {
         Order order = orderService.placeOrder(request, customer.getId(), images);
+        OrderResponse response = orderService.toResponse(order);
+        try {
+            trackingService.recordOrder(visitorId, sessionId, customer.getId(), order.getId(), response.getGrandTotal());
+        } catch (RuntimeException e) {
+            // The order is already saved; losing its tracking row must not fail the checkout.
+            log.warn("Could not record tracking for order #{}: {}", order.getId(), e.getMessage());
+        }
         URI location = ServletUriComponentsBuilder.fromCurrentContextPath()
                 .path("/orders/{id}").buildAndExpand(order.getId()).toUri();
-        return ResponseEntity.created(location).body(orderService.toResponse(order));
+        return ResponseEntity.created(location).body(response);
     }
 
     /** "/customer" is the pre-v2 path, kept so installed store apps keep working. */
