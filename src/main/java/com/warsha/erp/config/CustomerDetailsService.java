@@ -7,7 +7,10 @@ import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
-/** Loads e-commerce customers by email. They get ROLE_CUSTOMER (see {@link CustomerUserDetails}). */
+/**
+ * Loads e-commerce customers from a token subject: the customer id, or the email in tokens
+ * issued before phone sign-up. They get ROLE_CUSTOMER (see {@link CustomerUserDetails}).
+ */
 @Service
 public class CustomerDetailsService implements UserDetailsService {
 
@@ -18,8 +21,10 @@ public class CustomerDetailsService implements UserDetailsService {
     }
 
     @Override
-    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        Customer customer = customerRepo.findByEmail(email)
+    public UserDetails loadUserByUsername(String subject) throws UsernameNotFoundException {
+        Customer customer = (subject != null && subject.matches("\\d+")
+                ? customerRepo.findById(Long.parseLong(subject))
+                : customerRepo.findByEmail(subject))
                 .orElseThrow(() -> new UsernameNotFoundException("Customer not found"));
         return new CustomerUserDetails(customer);
     }

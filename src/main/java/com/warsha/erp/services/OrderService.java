@@ -210,7 +210,10 @@ public class OrderService {
         } else if (target == OrderStatus.PROCESSING) {
             Customer c = order.getCustomer();
             double due = order.getTotalPrice();
-            afterCommit(() -> emailService.sendOrderProcessingEmail(c.getEmail(), c.getFullName(), orderId.toString(), due));
+            // Customers who signed up with only a phone have no email
+            if (c.getEmail() != null && !c.getEmail().isBlank()) {
+                afterCommit(() -> emailService.sendOrderProcessingEmail(c.getEmail(), c.getFullName(), orderId.toString(), due));
+            }
         }
 
         return orderRepository.save(order);
@@ -230,7 +233,10 @@ public class OrderService {
         Order saved = orderRepository.save(order);
 
         Customer c = order.getCustomer();
-        afterCommit(() -> emailService.sendOrderCancellationEmail(c.getEmail(), c.getFullName(), orderId.toString()));
+        // Customers who signed up with only a phone have no email
+        if (c.getEmail() != null && !c.getEmail().isBlank()) {
+            afterCommit(() -> emailService.sendOrderCancellationEmail(c.getEmail(), c.getFullName(), orderId.toString()));
+        }
 
         log.info("Order #{} cancelled", orderId);
         return saved;

@@ -19,9 +19,14 @@ public class CustomerUserDetails implements UserDetails {
         return customer.getId();
     }
 
+    /** The customer id, matching the token subject (phone-only customers have no email). */
     @Override
     public String getUsername() {
-        return customer.getEmail();
+        return String.valueOf(customer.getId());
+    }
+
+    public Customer getCustomer() {
+        return customer;
     }
 
     @Override

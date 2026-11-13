@@ -148,4 +148,87 @@ class CustomerServiceTest {
         assertThat(json).doesNotContain("password", "hash", "otp", "998877");
         assertThat(new ObjectMapper().readValue("{\"password\":\"secret\"}", Customer.class).getPassword()).isEqualTo("secret");
     }
+
+    // ------------------------------------------------------------ store sign-up (phone + password, no OTP)
+
+    private Customer signUp(String phone, String email) {
+        ReflectionTestUtils.setField(service, "passwordEncoder",
+                new org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder(4));
+        when(zones.isValid(any())).thenAnswer(inv -> "القاهرة".equals(inv.getArgument(0)));
+        Customer c = new Customer();
+        c.setFullName(" Mona  Ali ");
+        c.setPhone(phone);
+        c.setEmail(email);
+        c.setPassword("secret1");
+        c.setGovernorate("القاهرة");
+        c.setAddress("12 Nile St");
+        return c;
+    }
+
+    @Test
+    void signUpWithoutEmailIsActiveAtOnceAndSendsNoCode() {
+        Customer saved = service.registerFromStore(signUp("٠١٠٠ ١٢٣ ٤٥٦٧", "  "));
+
+        assertThat(saved.getPhone()).isEqualTo("01001234567");
+        assertThat(saved.getEmail()).isNull();
+        assertThat(saved.getStatus()).isEqualTo("Active");
+        assertThat(saved.getOtp()).isNull();
+        assertThat(saved.getPassword()).startsWith("$2a$");
+        verifyNoInteractions(email);
+    }
+
+    @Test
+    void signUpRefusesAPhoneThatAlreadyHasAStoreAccount() {
+        existing(1, "Old", "+20 100 123 4567");
+
+        assertThatThrownBy(() -> service.registerFromStore(signUp("01001234567", null)))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("phone");
+    }
+
+    @Test
+    void signUpClaimsAnErpRecordWithThatPhoneAndKeepsStaffDetails() {
+        Customer erp = existing(7, "Mona (shop)", "01001234567");
+        erp.setPassword(null);
+        erp.setStatus("Active");
+
+        Customer saved = service.registerFromStore(signUp("01001234567", "mona@mail.com"));
+
+        assertThat(saved.getId()).isEqualTo(7L);
+        assertThat(saved.getFullName()).isEqualTo("Mona (shop)");
+        assertThat(saved.getAddress()).isEqualTo("12 Nile St");
+        assertThat(saved.getEmail()).isEqualTo("mona@mail.com");
+        assertThat(saved.getPassword()).startsWith("$2a$");
+    }
+
+    @Test
+    void signUpRefusesAnEmailUsedByAnotherCustomer() {
+        Customer other = new Customer();
+        other.setId(9L);
+        when(customers.findByEmail("taken@mail.com")).thenReturn(Optional.of(other));
+
+        assertThatThrownBy(() -> service.registerFromStore(signUp("01001234567", "taken@mail.com")))
+                .isInstanceOf(ConflictException.class)
+                .hasMessageContaining("email");
+    }
+
+    @Test
+    void signUpRejectsABadPhoneOrShortPassword() {
+        assertThatThrownBy(() -> service.registerFromStore(signUp("12345", null)))
+                .isInstanceOf(ValidationException.class);
+        Customer shortPw = signUp("01001234567", null);
+        shortPw.setPassword("123");
+        assertThatThrownBy(() -> service.registerFromStore(shortPw))
+                .isInstanceOf(ValidationException.class);
+    }
+
+    @Test
+    void loginFindsByPhoneInAnyFormatOrByEmail() {
+        Customer c = existing(3, "Ali", "01112223333");
+        when(customers.findByEmail("ali@mail.com")).thenReturn(Optional.of(c));
+
+        assertThat(service.findForLogin("+20 111 222 3333")).contains(c);
+        assertThat(service.findForLogin("ali@mail.com")).contains(c);
+        assertThat(service.findForLogin("01000000000")).isEmpty();
+    }
 }
