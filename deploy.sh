@@ -46,6 +46,6 @@ ssh $USER@$SERVER_IP "pkill -f $JAR_NAME || true"
 echo "3. Starting new application..."
 # Added a small sleep to ensure the port clears, just in case
 # cd first so ./secrets.properties resolves next to the jar
-ssh $USER@$SERVER_IP "cd $REMOTE_PATH && nohup java -Xms256m -Xmx512m -jar $REMOTE_PATH$JAR_NAME > app.log 2>&1 &"
+ssh $USER@$SERVER_IP "cd $REMOTE_PATH; setsid nohup java -Xms256m -Xmx512m -jar $REMOTE_PATH$JAR_NAME --spring.profiles.active=prod > app.log 2>&1 < /dev/null &"
 
 echo "--- ✅ Deployment Complete! ---"

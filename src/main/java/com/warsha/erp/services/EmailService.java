@@ -35,7 +35,6 @@ public class EmailService {
 
     private static final String FROM = "elwarsha77a@gmail.com";
     private static final String FROM_NAME = "ورشة | El Warsha";
-    private static final String ORDERS_INBOX = "ahmednaser77a@gmail.com";
     private static final ClassPathResource LOGO = new ClassPathResource("email/logo.png");
 
     @Autowired
@@ -43,6 +42,14 @@ public class EmailService {
 
     @Value("${image.upload.dir:/root/warsha_images/}")
     private String imageUploadDir;
+
+    /** Receives new-order notifications; set per environment. */
+    @Value("${app.mail.orders-inbox:ahmednaser77a@gmail.com}")
+    private String ordersInbox;
+
+    /** When set (dev), every email goes here instead of its real recipient. */
+    @Value("${app.mail.redirect-all-to:}")
+    private String redirectAllTo;
 
     // Formatter for consistent log timestamps
     private final DateTimeFormatter logFormat = DateTimeFormatter.ofPattern("dd-MM-yyyy HH:mm:ss");
@@ -68,7 +75,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(FROM, FROM_NAME);
-            helper.setTo(toEmail);
+            helper.setTo(recipient(toEmail));
             helper.setSubject("رمز التحقق الخاص بك - ورشة");
             helper.setText(EmailTemplates.otp(otp), true);
             addLogo(helper);
@@ -123,7 +130,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(FROM, FROM_NAME);
-            helper.setTo(ORDERS_INBOX);
+            helper.setTo(recipient(ordersInbox));
             if (order.getCustomer().getEmail() != null && !order.getCustomer().getEmail().isBlank()) {
                 helper.setReplyTo(order.getCustomer().getEmail());
             }
@@ -178,7 +185,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(FROM, FROM_NAME);
-            helper.setTo(customerEmail);
+            helper.setTo(recipient(customerEmail));
             helper.setSubject("نحن نجهز طلبك بكل عناية ✨ رقم الطلب #" + orderId);
             helper.setText(EmailTemplates.orderProcessing(customerName, orderId, orderTotal), true);
             addLogo(helper);
@@ -197,7 +204,7 @@ public class EmailService {
             MimeMessageHelper helper = new MimeMessageHelper(message, true, "UTF-8");
 
             helper.setFrom(FROM, FROM_NAME);
-            helper.setTo(customerEmail);
+            helper.setTo(recipient(customerEmail));
             helper.setSubject("تحديث بخصوص طلبك رقم #" + orderId);
             helper.setText(EmailTemplates.orderCancelled(customerName, orderId), true);
             addLogo(helper);
@@ -208,6 +215,10 @@ public class EmailService {
         } catch (Exception e) {
             System.err.println("ERROR: Failed to send cancellation email: " + e.getMessage());
         }
+    }
+
+    private String recipient(String to) {
+        return redirectAllTo == null || redirectAllTo.isBlank() ? to : redirectAllTo;
     }
 
     private void addLogo(MimeMessageHelper helper) throws MessagingException {

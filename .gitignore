@@ -38,4 +38,8 @@ build/
 
 ### Secrets ###
 secrets.properties
+secrets-dev.properties
 tokens/
+
+### Local database backups (copies of production data) ###
+db-backups/
